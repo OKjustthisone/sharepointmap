@@ -346,18 +346,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
     } else {
-      // 不在缓存中：这只能是 1 级未收藏的目录
+      // 不在缓存中：这只能是 1 级目录
       if (parentItem.level === 1) {
+        const isFav = favorites.some(fav => fav.id === parentItem.id);
         const tipEl = document.createElement('div');
         tipEl.className = 'uncached-tip';
         tipEl.style.marginLeft = `${(depth - 1) * 16 + 10}px`;
-        tipEl.innerHTML = `
-          <span>该目录未在本地缓存中。请先 <button class="inline-fav-btn">★ 收藏该文件夹</button> 以在后台自动同步其子目录。</span>
-        `;
         
-        tipEl.querySelector('.inline-fav-btn').addEventListener('click', () => {
-          toggleFavorite(parentItem);
-        });
+        if (isFav) {
+          tipEl.innerHTML = `
+            <span>该目录缓存未同步。请点击 <button class="inline-sync-btn">🔄 重新同步子目录</button> 尝试拉取。</span>
+          `;
+          tipEl.querySelector('.inline-sync-btn').addEventListener('click', async () => {
+            const btn = tipEl.querySelector('.inline-sync-btn');
+            btn.disabled = true;
+            btn.innerText = '⏳ 正在同步...';
+            showToast('🚀 正在同步该文件夹下的子目录...');
+            try {
+              await syncSubtree(parentItem.id, parentItem.relativeUrl);
+              showToast('✨ 子树目录同步完成！已完全缓存。');
+              await loadDataFromStorage();
+              renderDirectoryTree();
+            } catch (err) {
+              console.error('Subtree sync failed:', err);
+              showToast(`⚠️ 同步失败: ${err.message || err}`);
+              btn.disabled = false;
+              btn.innerText = '🔄 重新同步子目录';
+            }
+          });
+        } else {
+          tipEl.innerHTML = `
+            <span>该目录未在本地缓存中。请先 <button class="inline-fav-btn">★ 收藏该文件夹</button> 以在后台自动同步其子目录。</span>
+          `;
+          tipEl.querySelector('.inline-fav-btn').addEventListener('click', () => {
+            toggleFavorite(parentItem);
+          });
+        }
         container.appendChild(tipEl);
       } else {
         // 如果是深层目录没有缓存（不应发生，因为 1 级收藏会拉取整树，这里做容错处理）

@@ -21,14 +21,13 @@ async function clearDNRRules() {
 
 // 辅助函数：安全转义 SharePoint 相对路径 URL (保留斜杠并处理空格与单引号)
 function cleanRelativePathUrl(siteUrl, relativePath, apiType) {
-  // 1. 转义单引号以防止 OData 语句解析截断
+  // 1. 转义单引号以防止 OData 语句解析截断 (两单引号表示转义)
   const escapedPath = relativePath.replace(/'/g, "''");
-  // 2. 拼接原始 API 地址
-  const rawUrl = `${siteUrl}/_api/web/GetFolderByServerRelativeUrl('${escapedPath}')/${apiType}`;
-  // 3. 使用 encodeURI 对整条 URL 进行编码。
-  // encodeURI 的精妙之处在于它会转义空格 (%20) 和中文字符，但会严格保留斜杠 (/) 和单引号 (') 不予转义。
-  // 这能完美避免 encodeURIComponent 将斜杠转义为 %2F 从而导致 SharePoint 路由报 404 的问题。
-  return encodeURI(rawUrl);
+  // 2. 使用 encodeURIComponent 对路径进行完整编码，确保所有的特殊字符 (例如 #、%、& 等) 被正确编码，避免 HTTP 解析问题。
+  // 在 GetFolderByServerRelativePath 中，路径是作为字符串参数传递的，因此斜杠 / 编码为 %2F 也是完全被支持的。
+  const encodedPath = encodeURIComponent(escapedPath);
+  // 3. 拼接 API 地址 (使用 GetFolderByServerRelativePath API)
+  return `${siteUrl}/_api/web/GetFolderByServerRelativePath(decodedurl='${encodedPath}')/${apiType}`;
 }
 
 // 核心函数：使用 url 参数读取 Cookie（自动获取父域名如 .sharepoint.com 的授权 Cookie）
@@ -228,7 +227,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
         ]);
 
         if (!foldersRes.ok || !filesRes.ok) {
-          console.error(`Failed to fetch subfolder data for: ${currentRelativeUrl}, HTTP ${foldersRes.status} / ${filesRes.status}`);
+          const errMsg = `Failed to fetch subfolder data for: ${currentRelativeUrl}, HTTP ${foldersRes.status} / ${filesRes.status}`;
+          console.error(errMsg);
+          if (currentRelativeUrl === l1FolderRelativeUrl) {
+            throw new Error(`获取该文件夹的子目录失败 (HTTP ${foldersRes.status}/${filesRes.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
+          }
           continue;
         }
 
@@ -274,6 +277,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 
       } catch (err) {
         console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
+        if (currentRelativeUrl === l1FolderRelativeUrl) {
+          throw err;
+        }
       }
 
       // 延迟 50ms 避开限流

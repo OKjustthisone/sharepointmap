@@ -490,6 +490,12 @@ body {
   color: #fff;
 }
 
+.uncached-tip button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
 /* 页脚 */
 .app-footer {
   padding: 10px 20px;
