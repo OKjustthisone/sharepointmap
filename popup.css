@@ -542,3 +542,28 @@ body {
   90% { opacity: 1; transform: translateY(0); }
   100% { opacity: 0; transform: translateY(-10px); }
 }
+
+/* 目录树折叠展开样式 */
+.toggle-title {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  padding: 4px 0;
+  transition: color 0.2s ease;
+}
+
+.toggle-title:hover {
+  color: var(--primary-cyan);
+}
+
+.toggle-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.directory-tree-container.collapsed {
+  display: none !important;
+}

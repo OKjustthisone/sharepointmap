@@ -60,8 +60,11 @@
 
         <!-- 目录树浏览部分 -->
         <section id="directorySection" class="content-section">
-          <h3 class="section-title">📁 全部目录</h3>
-          <div id="directoryTree" class="directory-tree-container">
+          <h3 class="section-title toggle-title" id="directoryToggleBtn">
+            <span>📁 全部目录 (仅用于添加收藏)</span>
+            <span id="directoryToggleArrow" class="toggle-arrow">▶ 展开浏览</span>
+          </h3>
+          <div id="directoryTree" class="directory-tree-container collapsed">
             <div class="loading-spinner-wrapper">
               <div class="spinner"></div>
               <span>正在加载本地数据...</span>

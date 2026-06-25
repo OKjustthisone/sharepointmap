@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const defaultViews = document.getElementById('defaultViews');
   const favoritesList = document.getElementById('favoritesList');
   const directoryTree = document.getElementById('directoryTree');
+  const directoryToggleBtn = document.getElementById('directoryToggleBtn');
+  const directoryToggleArrow = document.getElementById('directoryToggleArrow');
   const syncTimeSpan = document.getElementById('syncTime');
   const toastContainer = document.getElementById('toastContainer');
 
@@ -33,6 +35,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
+  
+  // 3. 绑定“全部目录”展开/折叠事件
+  let isTreeExpanded = false; // 默认不展开
+  directoryToggleBtn.addEventListener('click', () => {
+    isTreeExpanded = !isTreeExpanded;
+    if (isTreeExpanded) {
+      directoryTree.classList.remove('collapsed');
+      directoryToggleArrow.innerText = '▼ 收起目录';
+      directoryToggleArrow.style.color = 'var(--primary-cyan)';
+    } else {
+      directoryTree.classList.add('collapsed');
+      directoryToggleArrow.innerText = '▶ 展开浏览';
+      directoryToggleArrow.style.color = 'var(--text-muted)';
+    }
+  });
   
   // 手动同步事件
   refreshBtn.addEventListener('click', async () => {
