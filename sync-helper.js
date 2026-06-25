@@ -167,6 +167,27 @@ async function syncLevel1() {
       });
     });
 
+    // 自动更新收藏夹中可能发生重命名或路径变更的 1 级项目
+    const { favorites } = await chrome.storage.local.get('favorites');
+    if (favorites && Array.isArray(favorites)) {
+      let updatedFavs = false;
+      favorites.forEach(fav => {
+        const matchingItem = items.find(item => item.id === fav.id);
+        if (matchingItem) {
+          if (fav.name !== matchingItem.name || fav.relativeUrl !== matchingItem.relativeUrl || fav.webUrl !== matchingItem.webUrl) {
+            fav.name = matchingItem.name;
+            fav.relativeUrl = matchingItem.relativeUrl;
+            fav.webUrl = matchingItem.webUrl;
+            updatedFavs = true;
+          }
+        }
+      });
+      if (updatedFavs) {
+        await chrome.storage.local.set({ favorites: favorites });
+        console.log('[SharePoint Map] Self-healed Level 1 items in favorites.');
+      }
+    }
+
     // 写入本地存储
     await chrome.storage.local.set({
       l1_cache: {
@@ -221,6 +242,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     const folderTreeCache = {};
     const queue = [l1FolderRelativeUrl];
     let nodeCount = 0;
+    const allDiscoveredItems = {};
     
     const MAX_FOLDERS = 500; 
     let folderCount = 0;
@@ -273,24 +295,28 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
           .map(item => {
             queue.push(item.ServerRelativeUrl);
             nodeCount++;
-            return {
+            const folderObj = {
               id: item.UniqueId,
               name: item.Name,
               type: 'folder',
               relativeUrl: item.ServerRelativeUrl,
               webUrl: `${baseUrl}${item.ServerRelativeUrl}`
             };
+            allDiscoveredItems[item.UniqueId] = folderObj;
+            return folderObj;
           });
 
         const parsedFiles = subFiles.map(item => {
           nodeCount++;
-          return {
+          const fileObj = {
             id: item.UniqueId,
             name: item.Name,
             type: 'file',
             relativeUrl: item.ServerRelativeUrl,
             webUrl: `${baseUrl}${item.ServerRelativeUrl}`
           };
+          allDiscoveredItems[item.UniqueId] = fileObj;
+          return fileObj;
         });
 
         folderTreeCache[currentRelativeUrl] = {
@@ -310,6 +336,28 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 
       // 延迟 50ms 避开限流
       await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    // 自动更新收藏夹中可能发生重命名或路径变更的深层项目
+    const favData = await chrome.storage.local.get('favorites');
+    const favoritesList = favData.favorites;
+    if (favoritesList && Array.isArray(favoritesList)) {
+      let updatedFavs = false;
+      favoritesList.forEach(fav => {
+        const matchingItem = allDiscoveredItems[fav.id];
+        if (matchingItem) {
+          if (fav.name !== matchingItem.name || fav.relativeUrl !== matchingItem.relativeUrl || fav.webUrl !== matchingItem.webUrl) {
+            fav.name = matchingItem.name;
+            fav.relativeUrl = matchingItem.relativeUrl;
+            fav.webUrl = matchingItem.webUrl;
+            updatedFavs = true;
+          }
+        }
+      });
+      if (updatedFavs) {
+        await chrome.storage.local.set({ favorites: favoritesList });
+        console.log('[SharePoint Map] Self-healed deep items in favorites.');
+      }
     }
 
     // 读取并更新缓存
