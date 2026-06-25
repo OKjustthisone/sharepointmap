@@ -355,15 +355,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       // 不在缓存中：这只能是 1 级目录
       if (parentItem.level === 1) {
-        const isSyncing = syncStatus[parentItem.id] === 'syncing';
+        const isSyncing = syncStatus[parentItem.id] && syncStatus[parentItem.id].status === 'syncing';
         const isFav = favorites.some(fav => fav.id === parentItem.id);
         const tipEl = document.createElement('div');
         tipEl.className = 'uncached-tip';
         tipEl.style.marginLeft = `${(depth - 1) * 16 + 10}px`;
         
         if (isSyncing) {
+          const progress = syncStatus[parentItem.id];
+          const folderCount = progress ? progress.folderCount : 0;
+          const nodeCount = progress ? progress.nodeCount : 0;
+          const currentFolder = progress ? progress.currentFolder : '';
+          
           tipEl.innerHTML = `
-            <span>⏳ 正在后台同步此文件夹的子目录，您可以关闭此窗口...</span>
+            <div class="sync-progress-wrapper" style="display: flex; align-items: center; gap: 8px;">
+              <div class="spinner mini"></div>
+              <span>⏳ 正在后台同步: 已扫描 <strong>${folderCount}</strong> 个目录，发现 <strong>${nodeCount}</strong> 个项目...</span>
+            </div>
+            ${currentFolder ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; padding-left: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;" title="${currentFolder}">当前: ${currentFolder}</div>` : ''}
           `;
         } else if (isFav) {
           tipEl.innerHTML = `

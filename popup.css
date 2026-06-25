@@ -304,6 +304,12 @@ body {
   animation: spin 0.8s infinite linear;
 }
 
+.spinner.mini {
+  width: 14px;
+  height: 14px;
+  border-width: 1.5px;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

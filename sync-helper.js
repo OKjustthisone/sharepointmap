@@ -192,13 +192,30 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   const { siteUrl } = sp_config;
   const baseUrl = siteUrl.split('/sites/')[0];
 
-  try {
-    // 标记为正在同步
+  let lastProgressWrite = 0;
+  const updateSyncProgress = async (count, nodes, currentPath, force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressWrite < 300) {
+      return;
+    }
+    lastProgressWrite = now;
+
     const statusData = await chrome.storage.local.get('sync_status');
     const syncStatus = statusData.sync_status || {};
-    syncStatus[l1FolderId] = 'syncing';
-    await chrome.storage.local.set({ sync_status: syncStatus });
+    const pathParts = currentPath.split('/');
+    const currentFolderName = pathParts[pathParts.length - 1] || currentPath;
 
+    syncStatus[l1FolderId] = {
+      status: 'syncing',
+      folderCount: count,
+      nodeCount: nodes,
+      currentFolder: currentFolderName
+    };
+    await chrome.storage.local.set({ sync_status: syncStatus });
+  };
+
+  try {
+    await updateSyncProgress(0, 0, l1FolderRelativeUrl, true);
     await setupCookieDNRRule(siteUrl);
 
     const folderTreeCache = {};
@@ -280,6 +297,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
           folders: parsedFolders,
           files: parsedFiles
         };
+
+        // 实时报告同步进度
+        await updateSyncProgress(folderCount, nodeCount, currentRelativeUrl);
 
       } catch (err) {
         console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
