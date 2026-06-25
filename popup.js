@@ -169,29 +169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     favoritesList.className = '';
     favorites.forEach(fav => {
-      const favNode = document.createElement('div');
-      favNode.className = 'tree-node';
-      
-      const isFolder = fav.type === 'folder';
-      const icon = isFolder ? '📁' : '📄';
-
-      favNode.innerHTML = `
-        <div class="node-left">
-          <span class="node-icon">${icon}</span>
-          <span class="node-name" title="${fav.relativeUrl}">${fav.name}</span>
-        </div>
-        <div class="node-right is-fav">
-          <button class="action-btn open-btn" data-url="${fav.webUrl}">打开 🌐</button>
-          <button class="action-btn copy-btn" data-url="${fav.webUrl}">复制 📋</button>
-          <button class="fav-btn active" data-id="${fav.id}">⭐</button>
-        </div>
-      `;
-
-      // 绑定打开/复制/取消收藏事件
-      favNode.querySelector('.open-btn').addEventListener('click', () => handleOpen(fav.webUrl));
-      favNode.querySelector('.copy-btn').addEventListener('click', () => handleCopy(fav.webUrl));
-      favNode.querySelector('.fav-btn').addEventListener('click', () => toggleFavorite(fav));
-
+      const favNode = createTreeNodeElement(fav, 1);
       favoritesList.appendChild(favNode);
     });
   }
