@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let favorites = [];
   let l1Cache = null;
   let subtreeCache = {};
+  let syncStatus = {};
   
   // 树状图折叠展开状态映射 (folderId -> boolean)
   let expandedState = {};
@@ -77,11 +78,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==================== 初始化与数据加载 ====================
 
   async function initApp() {
-    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'subtree_cache']);
+    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'subtree_cache', 'sync_status']);
     spConfig = data.sp_config;
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
     subtreeCache = data.subtree_cache || {};
+    syncStatus = data.sync_status || {};
 
     if (!spConfig || !spConfig.siteUrl || !spConfig.libraryName) {
       showAlert('⚠️ 请先配置您的 SharePoint 站点与文档库。');
@@ -141,10 +143,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 重新从 storage 读取最新数据
   async function loadDataFromStorage() {
-    const data = await chrome.storage.local.get(['favorites', 'l1_cache', 'subtree_cache']);
+    const data = await chrome.storage.local.get(['favorites', 'l1_cache', 'subtree_cache', 'sync_status']);
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
     subtreeCache = data.subtree_cache || {};
+    syncStatus = data.sync_status || {};
     updateSyncTimeDisplay();
   }
 
@@ -168,7 +171,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     favoritesList.className = '';
-    favorites.forEach(fav => {
+    
+    // 按名称排序：文件夹优先，然后按字母/数字自然排序
+    const sortedFavorites = [...favorites].sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'folder' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name, 'zh-CN', { numeric: true });
+    });
+
+    sortedFavorites.forEach(fav => {
       const favNode = createTreeNodeElement(fav, 1);
       favoritesList.appendChild(favNode);
     });
@@ -326,31 +338,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       // 不在缓存中：这只能是 1 级目录
       if (parentItem.level === 1) {
+        const isSyncing = syncStatus[parentItem.id] === 'syncing';
         const isFav = favorites.some(fav => fav.id === parentItem.id);
         const tipEl = document.createElement('div');
         tipEl.className = 'uncached-tip';
         tipEl.style.marginLeft = `${(depth - 1) * 16 + 10}px`;
         
-        if (isFav) {
+        if (isSyncing) {
+          tipEl.innerHTML = `
+            <span>⏳ 正在后台同步此文件夹的子目录，您可以关闭此窗口...</span>
+          `;
+        } else if (isFav) {
           tipEl.innerHTML = `
             <span>该目录缓存未同步。请点击 <button class="inline-sync-btn">🔄 重新同步子目录</button> 尝试拉取。</span>
           `;
-          tipEl.querySelector('.inline-sync-btn').addEventListener('click', async () => {
+          tipEl.querySelector('.inline-sync-btn').addEventListener('click', () => {
             const btn = tipEl.querySelector('.inline-sync-btn');
             btn.disabled = true;
             btn.innerText = '⏳ 正在同步...';
-            showToast('🚀 正在同步该文件夹下的子目录...');
-            try {
-              await syncSubtree(parentItem.id, parentItem.relativeUrl);
-              showToast('✨ 子树目录同步完成！已完全缓存。');
-              await loadDataFromStorage();
-              renderDirectoryTree();
-            } catch (err) {
-              console.error('Subtree sync failed:', err);
-              showToast(`⚠️ 同步失败: ${err.message || err}`);
-              btn.disabled = false;
-              btn.innerText = '🔄 重新同步子目录';
-            }
+            triggerSubtreeSyncInBackground(parentItem.id, parentItem.relativeUrl);
           });
         } else {
           tipEl.innerHTML = `
@@ -486,6 +492,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchResultsSection.classList.remove('hide');
   }
 
+  // 触发后台同步子目录（通过 Background 避免弹窗关闭终止任务）
+  function triggerSubtreeSyncInBackground(folderId, relativeUrl) {
+    showToast('🚀 已在后台启动子目录同步，可以关闭此窗口...');
+    chrome.runtime.sendMessage({
+      action: 'sync_subtree',
+      folderId: folderId,
+      relativeUrl: relativeUrl
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('Background sync trigger error:', chrome.runtime.lastError);
+        showToast('❌ 触发后台同步失败');
+      } else if (response && !response.success) {
+        console.error('Background sync failed:', response.error);
+        showToast(`❌ 同步失败: ${response.error}`);
+      } else {
+        showToast('✨ 子树目录同步完成！已完全缓存。');
+      }
+    });
+  }
+
   // ==================== 打开与复制行为 ====================
 
   function handleOpen(url) {
@@ -523,18 +549,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // 核心要求：如果是 1 级文件夹，收藏后立即触发对子树进行全量递归同步
       if (item.type === 'folder' && item.level === 1) {
-        showToast('🚀 正在同步该文件夹下的子目录...');
-        syncSubtree(item.id, item.relativeUrl)
-          .then(async (count) => {
-            showToast('✨ 子树目录同步完成！已完全缓存。');
-            // 重新拉取 storage 刷新树的节点
-            await loadDataFromStorage();
-            renderDirectoryTree();
-          })
-          .catch((err) => {
-            console.error('Subtree sync failed:', err);
-            showToast('⚠️ 子目录同步失败，请检查网络登录态。');
-          });
+        triggerSubtreeSyncInBackground(item.id, item.relativeUrl);
       }
     } else {
       // 取消收藏
@@ -583,4 +598,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   function hideAlert() {
     alertBanner.classList.add('hide');
   }
+
+  // 监听本地存储变化，实现实时响应刷新
+  chrome.storage.onChanged.addListener(async (changes, namespace) => {
+    if (namespace === 'local') {
+      if (changes.subtree_cache || changes.favorites || changes.l1_cache || changes.sync_status) {
+        await loadDataFromStorage();
+        renderFavorites();
+        renderDirectoryTree();
+      }
+    }
+  });
 });

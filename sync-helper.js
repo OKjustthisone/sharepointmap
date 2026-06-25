@@ -193,6 +193,12 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   const baseUrl = siteUrl.split('/sites/')[0];
 
   try {
+    // 标记为正在同步
+    const statusData = await chrome.storage.local.get('sync_status');
+    const syncStatus = statusData.sync_status || {};
+    syncStatus[l1FolderId] = 'syncing';
+    await chrome.storage.local.set({ sync_status: syncStatus });
+
     await setupCookieDNRRule(siteUrl);
 
     const folderTreeCache = {};
@@ -300,6 +306,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 
   } finally {
     await clearDNRRules();
+    // 清除正在同步的状态
+    const statusData = await chrome.storage.local.get('sync_status');
+    const syncStatus = statusData.sync_status || {};
+    delete syncStatus[l1FolderId];
+    await chrome.storage.local.set({ sync_status: syncStatus });
   }
 }
 
