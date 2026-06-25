@@ -52,22 +52,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // 手动同步事件
-  refreshBtn.addEventListener('click', async () => {
+  refreshBtn.addEventListener('click', () => {
     refreshBtn.classList.add('loading');
-    showToast('🔄 正在同步 1 级目录...');
+    showToast('🔄 已在后台启动全量检查更新，可以关闭此窗口...');
     
-    try {
-      const items = await syncLevel1();
-      showToast('✨ 1 级目录同步成功！');
-      await loadDataFromStorage();
-      renderFavorites();
-      renderDirectoryTree();
-    } catch (err) {
-      console.error(err);
-      showToast(`❌ 同步失败: ${err.message || err}`);
-    } finally {
+    chrome.runtime.sendMessage({ action: 'sync_all' }, (response) => {
       refreshBtn.classList.remove('loading');
-    }
+      if (chrome.runtime.lastError) {
+        console.error('Background sync all failed:', chrome.runtime.lastError);
+        showToast('❌ 检查更新异常: ' + chrome.runtime.lastError.message);
+      } else if (response && !response.success) {
+        console.error('Background sync all returned error:', response.error);
+        showToast(`❌ 检查更新失败: ${response.error}`);
+      } else {
+        showToast('✨ 全量数据检查更新完成！');
+      }
+    });
   });
 
   // 搜索输入过滤
@@ -180,6 +180,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==================== 渲染收藏夹 ====================
 
   function renderFavorites() {
+    const favCountSpan = document.getElementById('favCount');
+    if (favCountSpan) {
+      favCountSpan.innerText = favorites.length > 0 ? `(${favorites.length})` : '';
+    }
+
     favoritesList.innerHTML = '';
     if (favorites.length === 0) {
       favoritesList.className = 'empty-list-placeholder';
@@ -351,6 +356,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       files.forEach(sub => {
         container.appendChild(createTreeNodeElement({ ...sub, level: depth }, depth));
       });
+
+      // 如果是 1 级收藏的文件夹，在其展开列表的最下方展示全量统计汇总
+      if (parentItem.level === 1) {
+        let totalFolders = 0;
+        let totalFiles = 0;
+        const cacheRoot = subtreeCache[parentItem.id];
+        if (cacheRoot && cacheRoot.tree) {
+          Object.values(cacheRoot.tree).forEach(node => {
+            totalFolders += (node.folders || []).length;
+            totalFiles += (node.files || []).length;
+          });
+        }
+        
+        const summaryEl = document.createElement('div');
+        summaryEl.className = 'tree-node-summary';
+        summaryEl.style.paddingLeft = `${depth * 16 + 10}px`;
+        summaryEl.innerHTML = `📊 该目录下共含有 <strong>${totalFolders}</strong> 个文件夹，<strong>${totalFiles}</strong> 个文件`;
+        container.appendChild(summaryEl);
+      }
 
     } else {
       // 不在缓存中：这只能是 1 级目录

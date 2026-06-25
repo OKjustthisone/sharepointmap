@@ -573,3 +573,19 @@ body {
 .directory-tree-container.collapsed {
   display: none !important;
 }
+
+/* 收藏数与子项数据汇总样式 */
+#favCount {
+  color: var(--text-muted);
+  font-weight: normal;
+  margin-left: 4px;
+}
+
+.tree-node-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.05);
+  margin-top: 4px;
+  margin-bottom: 8px;
+}

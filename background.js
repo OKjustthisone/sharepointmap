@@ -20,6 +20,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 消息监听保留，以备将来需要
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'sync_all') {
+    performAllSync()
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message || err }));
+    return true; // 异步通道
+  }
+
   if (request.action === 'sync_level1') {
     syncLevel1()
       .then((items) => sendResponse({ success: true, count: items.length }))
