@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>SharePoint 快速访问 - 配置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <!-- 动态液态背景圆 -->
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+
+  <div class="container">
+    <div class="glass-card">
+      <div class="header">
+        <h1 class="gradient-text">SharePoint 快速访问</h1>
+        <p class="subtitle">配置您的 SharePoint 站点与文档库连接</p>
+      </div>
+
+      <div class="form-group">
+        <label for="siteUrl">SharePoint 站点 URL</label>
+        <input type="url" id="siteUrl" placeholder="例如: https://company.sharepoint.com/sites/Marketing" required>
+        <p class="input-tip">请输入到具体 Site 路径，无需包含子目录或 Documents 库名。</p>
+      </div>
+
+      <div class="form-group">
+        <label for="libraryName">文档库名称 (Document Library)</label>
+        <input type="text" id="libraryName" placeholder="例如: Shared Documents 或 共享文档" value="Shared Documents" required>
+        <p class="input-tip">微软默认英文名为 <code>Shared Documents</code>，中文系统通常为 <code>共享文档</code> 或 <code>文档</code>。</p>
+      </div>
+
+      <div class="button-group">
+        <button id="saveBtn" class="btn btn-primary">保存并测试连接</button>
+      </div>
+
+      <div id="statusContainer" class="status-panel hide">
+        <div class="status-icon"></div>
+        <div class="status-message">
+          <h4 id="statusTitle">正在测试连接...</h4>
+          <p id="statusDesc">请稍候...</p>
+        </div>
+      </div>
+      
+      <div class="instructions">
+        <h3>💡 快速使用指南</h3>
+        <ul>
+          <li><strong>免密码设计</strong>：本插件直接使用浏览器中现有的 SharePoint 登录态 Cookie。您无需在插件内输入密码。</li>
+          <li><strong>首次使用</strong>：请确保您已在浏览器的其他标签页登录了公司 SharePoint。</li>
+          <li><strong>多级缓存</strong>：保存成功后，插件会自动下载该站点 1 级目录。您可以在弹窗 (Popup) 中收藏 1 级文件夹以自动下载其深层子孙目录。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <script src="sync-helper.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

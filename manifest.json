@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "SharePoint 快速访问 Map",
+  "version": "1.0.6",
+  "description": "极速浏览、搜索与收藏您的 SharePoint 文件夹及文件，采用高质感液态玻璃设计风格。",
+  "permissions": [
+    "storage",
+    "alarms",
+    "cookies",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SharePoint 快速访问"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "minimum_chrome_version": "88"
+}
