@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // 树状图折叠展开状态映射 (folderId -> boolean)
   let expandedState = {};
+  let isTreeExpanded = false; // 全部目录折叠展开状态
 
   // 1. 初始化检查配置
   await initApp();
@@ -40,9 +41,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   
   // 3. 绑定“全部目录”展开/折叠事件
-  let isTreeExpanded = false; // 默认不展开
   directoryToggleBtn.addEventListener('click', () => {
     isTreeExpanded = !isTreeExpanded;
+    saveUIState(); // 保存状态
     if (isTreeExpanded) {
       directoryTree.classList.remove('collapsed');
       directoryToggleArrow.innerText = '▼ 收起目录';
@@ -83,6 +84,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       chip.classList.add('active');
       activeFilter = chip.getAttribute('data-filter');
       
+      saveUIState(); // 保存状态
+
       const query = searchInput.value.trim().toLowerCase();
       if (query) {
         performSearch(query);
@@ -99,6 +102,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       l1FilterSelect.classList.remove('active');
     }
     
+    saveUIState(); // 保存状态
+
     const query = searchInput.value.trim().toLowerCase();
     if (query) {
       performSearch(query);
@@ -108,6 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 搜索输入过滤
   searchInput.addEventListener('input', () => {
     const query = searchInput.value.trim().toLowerCase();
+    saveUIState(); // 保存状态
     if (query) {
       clearSearchBtn.classList.remove('hide');
       performSearch(query);
@@ -134,18 +140,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const allChip = document.querySelector('[data-filter="all"]');
     if (allChip) allChip.classList.add('active');
     
+    saveUIState(); // 保存状态
+
     searchInput.focus();
   });
 
   // ==================== 初始化与数据加载 ====================
 
   async function initApp() {
-    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'subtree_cache', 'sync_status']);
+    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'subtree_cache', 'sync_status', 'ui_state']);
     spConfig = data.sp_config;
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
     subtreeCache = data.subtree_cache || {};
     syncStatus = data.sync_status || {};
+
+    // 恢复 UI 状态变量
+    const uiState = data.ui_state || {};
+    expandedState = uiState.expandedState || {};
+    isTreeExpanded = uiState.isTreeExpanded || false;
+    activeFilter = uiState.activeFilter || 'all';
+    activeL1Path = uiState.activeL1Path || 'all';
 
     if (!spConfig || !spConfig.siteUrl || !spConfig.libraryName) {
       showAlert('⚠️ 请先配置您的 SharePoint 站点与文档库。');
@@ -158,7 +173,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     hideAlert();
+
+    // 恢复全部目录的 UI 展开/收起状态
+    if (isTreeExpanded) {
+      directoryTree.classList.remove('collapsed');
+      directoryToggleArrow.innerText = '▼ 收起目录';
+      directoryToggleArrow.style.color = 'var(--primary-cyan)';
+    } else {
+      directoryTree.classList.add('collapsed');
+      directoryToggleArrow.innerText = '▶ 展开浏览';
+      directoryToggleArrow.style.color = 'var(--text-muted)';
+    }
     
+    // 恢复过滤器 Chip 的 active 状态
+    filterChips.forEach(chip => {
+      if (chip.getAttribute('data-filter') === activeFilter) {
+        chip.classList.add('active');
+      } else {
+        chip.classList.remove('active');
+      }
+    });
+
     // 如果本地没有缓存，提示并自动尝试首次同步
     if (!l1Cache) {
       directoryTree.innerHTML = `
@@ -195,6 +230,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             populateL1FilterDropdown();
             renderFavorites();
             renderDirectoryTree();
+            // 在数据后台同步完成后，如果刚才有恢复搜索，重新执行一下搜索
+            const query = uiState.searchQuery || '';
+            if (query) {
+              performSearch(query);
+            }
           })
           .catch(err => console.warn('Auto refresh failed:', err));
       }
@@ -203,6 +243,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       populateL1FilterDropdown();
       renderFavorites();
       renderDirectoryTree();
+
+      // 恢复搜索输入与触发搜索
+      const query = uiState.searchQuery || '';
+      if (query) {
+        searchInput.value = query;
+        clearSearchBtn.classList.remove('hide');
+        performSearch(query);
+      }
     }
   }
 
@@ -380,6 +428,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const nextExpanded = !expandedState[item.id];
         expandedState[item.id] = nextExpanded;
         
+        saveUIState(); // 保存状态
+        
         // 刷新节点图标
         const arrow = nodeEl.querySelector('.node-toggle');
         const folderIcon = nodeEl.querySelector('.node-icon');
@@ -529,6 +579,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     return null;
+  }
+
+  // 保存 UI 状态到本地存储
+  async function saveUIState() {
+    try {
+      await chrome.storage.local.set({
+        ui_state: {
+          expandedState,
+          isTreeExpanded,
+          searchQuery: searchInput.value,
+          activeFilter,
+          activeL1Path
+        }
+      });
+    } catch (e) {
+      console.warn('Failed to save UI state:', e);
+    }
   }
 
   // 动态填充 1 级目录筛选下拉框（仅包含已收藏的 1 级文件夹）
