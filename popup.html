@@ -42,7 +42,23 @@
     <main class="main-content">
       <!-- 搜索结果视图 (默认隐藏) -->
       <section id="searchResultsSection" class="content-section hide">
-        <h3 class="section-title">🔍 搜索结果</h3>
+        <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h3 class="section-title" style="margin-bottom: 0;">🔍 搜索结果</h3>
+          <span id="searchResultCount" style="font-size: 11px; color: var(--text-muted);">共 0 条</span>
+        </div>
+        
+        <!-- 搜索过滤条 -->
+        <div class="search-filter-bar">
+          <button class="filter-chip active" data-filter="all">全部</button>
+          <button class="filter-chip" data-filter="folder">文件夹 📁</button>
+          <button class="filter-chip" data-filter="l1">1级目录 📂</button>
+          <button class="filter-chip" data-filter="word">文档 📄</button>
+          <button class="filter-chip" data-filter="excel">表格 📊</button>
+          <button class="filter-chip" data-filter="ppt">PPT 📉</button>
+          <button class="filter-chip" data-filter="pdf">PDF 📕</button>
+          <button class="filter-chip" data-filter="prism">Prism 📊</button>
+        </div>
+
         <div id="searchResultsList" class="search-results-list">
           <!-- 动态插入搜索结果 -->
         </div>

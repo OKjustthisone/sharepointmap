@@ -70,6 +70,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // 搜索过滤器类型状态
+  let activeFilter = 'all';
+  const filterChips = document.querySelectorAll('.filter-chip');
+  filterChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      filterChips.forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeFilter = chip.getAttribute('data-filter');
+      
+      const query = searchInput.value.trim().toLowerCase();
+      if (query) {
+        performSearch(query);
+      }
+    });
+  });
+
   // 搜索输入过滤
   searchInput.addEventListener('input', () => {
     const query = searchInput.value.trim().toLowerCase();
@@ -89,6 +105,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearSearchBtn.classList.add('hide');
     searchResultsSection.classList.add('hide');
     defaultViews.classList.remove('hide');
+    
+    // 重置过滤器
+    activeFilter = 'all';
+    filterChips.forEach(c => c.classList.remove('active'));
+    const allChip = document.querySelector('[data-filter="all"]');
+    if (allChip) allChip.classList.add('active');
+    
     searchInput.focus();
   });
 
@@ -483,12 +506,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const searchPool = Array.from(uniqueMap.values());
 
-    // B. 进行模糊搜索匹配
+    // B. 进行模糊搜索匹配与过滤器筛选
     const filtered = searchPool.filter(item => {
       const nameMatch = item.name.toLowerCase().includes(query);
       const pathMatch = item.relativeUrl.toLowerCase().includes(query);
-      return nameMatch || pathMatch;
+      if (!nameMatch && !pathMatch) return false;
+
+      // 应用过滤器
+      if (activeFilter === 'all') return true;
+      if (activeFilter === 'folder') return item.type === 'folder';
+      if (activeFilter === 'l1') return item.level === 1;
+
+      // 文件类型过滤
+      if (item.type !== 'file') return false;
+      const ext = item.name.split('.').pop().toLowerCase();
+      
+      if (activeFilter === 'word') return ext === 'doc' || ext === 'docx';
+      if (activeFilter === 'excel') return ext === 'xls' || ext === 'xlsx';
+      if (activeFilter === 'ppt') return ext === 'ppt' || ext === 'pptx';
+      if (activeFilter === 'pdf') return ext === 'pdf';
+      if (activeFilter === 'prism') return ext === 'prism' || ext === 'pzfx';
+
+      return true;
     });
+
+    // 更新搜索结果总条数
+    const countEl = document.getElementById('searchResultCount');
+    if (countEl) {
+      countEl.innerText = `共 ${filtered.length} 条`;
+    }
 
     // C. 渲染搜索结果
     if (filtered.length === 0) {
