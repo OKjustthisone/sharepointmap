@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const syncTimeSpan = document.getElementById('syncTime');
   const toastContainer = document.getElementById('toastContainer');
   const l1FilterSelect = document.getElementById('l1FilterSelect');
+  const filterChips = document.querySelectorAll('.filter-chip');
 
   // 全局数据状态缓存与过滤器状态
   let activeFilter = 'all';
@@ -77,7 +78,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 搜索过滤芯片事件绑定
 
-  const filterChips = document.querySelectorAll('.filter-chip');
   filterChips.forEach(chip => {
     chip.addEventListener('click', () => {
       filterChips.forEach(c => c.classList.remove('active'));
