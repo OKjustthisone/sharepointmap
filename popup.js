@@ -684,12 +684,33 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ==================== 打开与复制行为 ====================
 
+  // 获取在线预览 URL (对 Office 文档及 PDF 附加 ?web=1 以便在浏览器中在线打开)
+  function getOnlineViewUrl(url) {
+    if (!url) return url;
+    if (url.includes('?')) return url;
+    
+    const officeExtensions = [
+      'doc', 'docx', 'docm', 'dot', 'dotx',
+      'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx',
+      'ppt', 'pptx', 'pps', 'ppsx', 'pptm',
+      'pdf'
+    ];
+    
+    const ext = url.split('.').pop().toLowerCase();
+    if (officeExtensions.includes(ext)) {
+      return `${url}?web=1`;
+    }
+    return url;
+  }
+
   function handleOpen(url) {
-    chrome.tabs.create({ url: url });
+    const finalUrl = getOnlineViewUrl(url);
+    chrome.tabs.create({ url: finalUrl });
   }
 
   function handleCopy(url) {
-    navigator.clipboard.writeText(url)
+    const finalUrl = getOnlineViewUrl(url);
+    navigator.clipboard.writeText(finalUrl)
       .then(() => {
         showToast('📋 链接已成功复制到剪贴板！');
       })
