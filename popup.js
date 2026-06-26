@@ -2,8 +2,8 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
   // DOM 元素获取
-  const refreshBtn = document.getElementById('refreshBtn');
   const settingsBtn = document.getElementById('settingsBtn');
+  const syncL1Btn = document.getElementById('syncL1Btn');
   const alertBanner = document.getElementById('alertBanner');
   const alertText = document.getElementById('alertText');
   const alertActionBtn = document.getElementById('alertActionBtn');
@@ -54,21 +54,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   
-  // 手动同步事件
-  refreshBtn.addEventListener('click', () => {
-    refreshBtn.classList.add('loading');
-    showToast('🔄 已在后台启动全量检查更新，可以关闭此窗口...');
+  // 手动同步 1 级目录事件
+  syncL1Btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    syncL1Btn.classList.add('loading');
+    showToast('🔄 已在后台启动 1 级目录同步...');
     
-    chrome.runtime.sendMessage({ action: 'sync_all' }, (response) => {
-      refreshBtn.classList.remove('loading');
+    chrome.runtime.sendMessage({ action: 'sync_level1' }, (response) => {
+      syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
-        console.error('Background sync all failed:', chrome.runtime.lastError);
-        showToast('❌ 检查更新异常: ' + chrome.runtime.lastError.message);
+        console.error('Background sync level 1 failed:', chrome.runtime.lastError);
+        showToast('❌ 同步 1 级目录异常: ' + chrome.runtime.lastError.message);
       } else if (response && !response.success) {
-        console.error('Background sync all returned error:', response.error);
-        showToast(`❌ 检查更新失败: ${response.error}`);
+        console.error('Background sync level 1 returned error:', response.error);
+        showToast(`❌ 同步 1 级目录失败: ${response.error}`);
       } else {
-        showToast('✨ 全量数据检查更新完成！');
+        showToast('✨ 1 级目录同步完成！');
       }
     });
   });
@@ -298,6 +299,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const icon = isFolder ? (isExpanded ? '📂' : '📁') : '📄';
 
+    let syncBtnHtml = '';
+    if (isFolder && item.level === 1 && isFav) {
+      syncBtnHtml = `<button class="action-btn sync-btn" title="同步该目录下的子树">同步 🔄</button>`;
+    }
+
     nodeEl.innerHTML = `
       <div class="node-left">
         <span class="${toggleClass}">${toggleIcon}</span>
@@ -305,6 +311,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <span class="node-name ${isFolder ? 'folder-node' : ''}" title="${item.relativeUrl}">${item.name}</span>
       </div>
       <div class="node-right ${isFav ? 'is-fav' : ''}">
+        ${syncBtnHtml}
         <button class="action-btn open-btn" data-url="${item.webUrl}">打开 🌐</button>
         <button class="action-btn copy-btn" data-url="${item.webUrl}">复制 📋</button>
         <button class="fav-btn ${isFav ? 'active' : ''}">${isFav ? '⭐' : '☆'}</button>
@@ -336,6 +343,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.stopPropagation();
       toggleFavorite(item);
     });
+
+    // 2.5 同步子树按钮事件
+    if (isFolder && item.level === 1 && isFav) {
+      const syncBtn = nodeEl.querySelector('.sync-btn');
+      if (syncBtn) {
+        syncBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          syncBtn.classList.add('loading');
+          
+          showToast(`🚀 已在后台启动目录 [${item.name}] 的同步，可以关闭此窗口...`);
+          
+          chrome.runtime.sendMessage({
+            action: 'sync_subtree',
+            folderId: item.id,
+            relativeUrl: item.relativeUrl
+          }, (response) => {
+            syncBtn.classList.remove('loading');
+            if (chrome.runtime.lastError) {
+              console.error('Background sync subtree failed:', chrome.runtime.lastError);
+              showToast('❌ 同步子目录异常: ' + chrome.runtime.lastError.message);
+            } else if (response && !response.success) {
+              console.error('Background sync subtree returned error:', response.error);
+              showToast(`❌ 同步子目录失败: ${response.error}`);
+            } else {
+              showToast(`✨ 目录 [${item.name}] 同步完成！`);
+            }
+          });
+        });
+      }
+    }
 
     // 3. 展开折叠事件 (如果是文件夹)
     if (isFolder) {

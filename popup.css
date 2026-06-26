@@ -314,6 +314,11 @@ body {
   to { transform: rotate(360deg); }
 }
 
+.loading {
+  animation: spin 1s linear infinite !important;
+  pointer-events: none;
+}
+
 /* 目录树节点 & 列表项 */
 .tree-node, .result-item {
   display: flex;

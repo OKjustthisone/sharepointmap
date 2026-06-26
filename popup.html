@@ -18,11 +18,10 @@
         <h2 class="app-title gradient-text">SharePoint Map</h2>
       </div>
       <div class="actions">
-        <button id="refreshBtn" title="刷新一级目录" class="icon-btn">🔄</button>
         <button id="settingsBtn" title="配置选项" class="icon-btn">⚙️</button>
       </div>
     </header>
-
+    
     <!-- 提示条 (如配置缺失或需要登录) -->
     <div id="alertBanner" class="alert-banner hide">
       <span id="alertText">请先配置您的站点。</span>
@@ -84,10 +83,13 @@
 
         <!-- 目录树浏览部分 -->
         <section id="directorySection" class="content-section">
-          <h3 class="section-title toggle-title" id="directoryToggleBtn">
-            <span>📁 全部目录 (仅用于添加收藏)</span>
-            <span id="directoryToggleArrow" class="toggle-arrow">▶ 展开浏览</span>
-          </h3>
+          <div class="directory-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h3 class="section-title toggle-title" id="directoryToggleBtn" style="margin-bottom: 0; flex-grow: 1; display: flex; align-items: center; justify-content: space-between;">
+              <span>📁 全部目录 (仅用于添加收藏)</span>
+              <span id="directoryToggleArrow" class="toggle-arrow" style="margin-right: 8px;">▶ 展开浏览</span>
+            </h3>
+            <button id="syncL1Btn" class="action-btn" title="只同步所有 1 级目录" style="font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.05); color: var(--text-secondary); cursor: pointer;">同步 1 级 🔄</button>
+          </div>
           <div id="directoryTree" class="directory-tree-container collapsed">
             <div class="loading-spinner-wrapper">
               <div class="spinner"></div>
