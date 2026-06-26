@@ -724,20 +724,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 获取在线预览 URL (对 Office 文档及 PDF 附加 ?web=1 以便在浏览器中在线打开)
   function getOnlineViewUrl(url) {
     if (!url) return url;
-    if (url.includes('?')) return url;
     
-    const officeExtensions = [
-      'doc', 'docx', 'docm', 'dot', 'dotx',
-      'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx',
-      'ppt', 'pptx', 'pps', 'ppsx', 'pptm',
-      'pdf'
-    ];
-    
-    const ext = url.split('.').pop().toLowerCase();
-    if (officeExtensions.includes(ext)) {
-      return `${url}?web=1`;
+    let targetUrl = url;
+    if (!targetUrl.includes('?')) {
+      const officeExtensions = [
+        'doc', 'docx', 'docm', 'dot', 'dotx',
+        'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx',
+        'ppt', 'pptx', 'pps', 'ppsx', 'pptm',
+        'pdf'
+      ];
+      
+      const ext = targetUrl.split('.').pop().toLowerCase();
+      if (officeExtensions.includes(ext)) {
+        targetUrl = `${targetUrl}?web=1`;
+      }
     }
-    return url;
+    
+    try {
+      // 先对 URL 进行解码，再通过 encodeURI 进行标准化转码，确保空格、中文等字符在复制和打开时是一致的转码链接
+      return encodeURI(decodeURI(targetUrl));
+    } catch (e) {
+      console.warn('URL decoding/encoding failed:', e);
+      return encodeURI(targetUrl);
+    }
   }
 
   function handleOpen(url) {
