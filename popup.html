@@ -48,19 +48,23 @@
         </div>
         
         <!-- 搜索过滤条 -->
-        <div class="search-filter-bar">
-          <button class="filter-chip active" data-filter="all">全部</button>
-          <button class="filter-chip" data-filter="folder">文件夹 📁</button>
-          <div class="filter-select-wrapper">
-            <select id="l1FilterSelect" class="filter-select">
-              <option value="all">所有 1 级目录 📂</option>
-            </select>
+        <div class="search-filter-row">
+          <div class="search-filter-bar">
+            <button class="filter-chip active" data-filter="all">全部</button>
+            <button class="filter-chip" data-filter="folder">文件夹 📁</button>
+            <div class="filter-select-wrapper">
+              <select id="l1FilterSelect" class="filter-select">
+                <option value="all">所有 1 级目录 📂</option>
+              </select>
+            </div>
           </div>
-          <button class="filter-chip" data-filter="word">文档 📄</button>
-          <button class="filter-chip" data-filter="excel">表格 📊</button>
-          <button class="filter-chip" data-filter="ppt">PPT 📉</button>
-          <button class="filter-chip" data-filter="pdf">PDF 📕</button>
-          <button class="filter-chip" data-filter="prism">Prism 📊</button>
+          <div class="search-filter-bar">
+            <button class="filter-chip" data-filter="word">文档 📄</button>
+            <button class="filter-chip" data-filter="excel">表格 📊</button>
+            <button class="filter-chip" data-filter="ppt">PPT 📉</button>
+            <button class="filter-chip" data-filter="pdf">PDF 📕</button>
+            <button class="filter-chip" data-filter="prism">Prism 📊</button>
+          </div>
         </div>
 
         <div id="searchResultsList" class="search-results-list">

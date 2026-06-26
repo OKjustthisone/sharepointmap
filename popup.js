@@ -494,7 +494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return null;
   }
 
-  // 动态填充 1 级目录筛选下拉框
+  // 动态填充 1 级目录筛选下拉框（仅包含已收藏的 1 级文件夹）
   function populateL1FilterDropdown() {
     const selectEl = document.getElementById('l1FilterSelect');
     if (!selectEl) return;
@@ -502,11 +502,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 保留第一个“所有 1 级目录”选项，清除其他选项
     selectEl.innerHTML = '<option value="all">所有 1 级目录 📂</option>';
 
-    if (l1Cache && l1Cache.items) {
-      // 筛选出 1 级目录中的文件夹，并按名称自然排序
-      const folders = l1Cache.items.filter(item => item.type === 'folder');
+    if (favorites && Array.isArray(favorites)) {
+      // 筛选出已收藏的 1 级目录文件夹，并按名称自然排序
+      const favoritedL1Folders = favorites.filter(item => item.type === 'folder' && item.level === 1);
+      favoritedL1Folders.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
       
-      folders.forEach(item => {
+      favoritedL1Folders.forEach(item => {
         const option = document.createElement('option');
         option.value = item.relativeUrl;
         option.textContent = `📁 ${item.name}`;
@@ -524,6 +525,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         activeL1Path = 'all';
         selectEl.value = 'all';
         selectEl.classList.remove('active');
+        
+        // 如果在搜索视图下且选择的一级目录被取消收藏，刷新搜索面板
+        const query = searchInput.value.trim().toLowerCase();
+        if (query) {
+          performSearch(query);
+        }
       }
     } else {
       selectEl.value = 'all';

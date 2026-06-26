@@ -591,12 +591,18 @@ body {
 }
 
 /* 搜索结果过滤栏 */
+.search-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .search-filter-bar {
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding-bottom: 8px;
-  margin-bottom: 12px;
+  padding-bottom: 2px;
 }
 
 /* 隐藏滚动条但保留滚动功能 */
