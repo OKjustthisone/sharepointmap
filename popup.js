@@ -72,6 +72,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 搜索过滤器类型状态
   let activeFilter = 'all';
+  let activeL1Path = 'all';
+  const l1FilterSelect = document.getElementById('l1FilterSelect');
+
   const filterChips = document.querySelectorAll('.filter-chip');
   filterChips.forEach(chip => {
     chip.addEventListener('click', () => {
@@ -84,6 +87,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         performSearch(query);
       }
     });
+  });
+
+  // 1级目录下拉筛选事件
+  l1FilterSelect.addEventListener('change', () => {
+    activeL1Path = l1FilterSelect.value;
+    if (activeL1Path !== 'all') {
+      l1FilterSelect.classList.add('active');
+    } else {
+      l1FilterSelect.classList.remove('active');
+    }
+    
+    const query = searchInput.value.trim().toLowerCase();
+    if (query) {
+      performSearch(query);
+    }
   });
 
   // 搜索输入过滤
@@ -108,6 +126,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 重置过滤器
     activeFilter = 'all';
+    activeL1Path = 'all';
+    l1FilterSelect.value = 'all';
+    l1FilterSelect.classList.remove('active');
     filterChips.forEach(c => c.classList.remove('active'));
     const allChip = document.querySelector('[data-filter="all"]');
     if (allChip) allChip.classList.add('active');
@@ -149,6 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await syncLevel1();
         showToast('✨ 1 级目录同步成功！');
         await loadDataFromStorage();
+        populateL1FilterDropdown();
         renderFavorites();
         renderDirectoryTree();
       } catch (err) {
@@ -169,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           .then(async () => {
             console.log('Auto refresh of Level 1 completed.');
             await loadDataFromStorage();
+            populateL1FilterDropdown();
             renderFavorites();
             renderDirectoryTree();
           })
@@ -176,6 +199,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       
       updateSyncTimeDisplay();
+      populateL1FilterDropdown();
       renderFavorites();
       renderDirectoryTree();
     }
@@ -470,6 +494,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     return null;
   }
 
+  // 动态填充 1 级目录筛选下拉框
+  function populateL1FilterDropdown() {
+    const selectEl = document.getElementById('l1FilterSelect');
+    if (!selectEl) return;
+
+    // 保留第一个“所有 1 级目录”选项，清除其他选项
+    selectEl.innerHTML = '<option value="all">所有 1 级目录 📂</option>';
+
+    if (l1Cache && l1Cache.items) {
+      // 筛选出 1 级目录中的文件夹，并按名称自然排序
+      const folders = l1Cache.items.filter(item => item.type === 'folder');
+      
+      folders.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.relativeUrl;
+        option.textContent = `📁 ${item.name}`;
+        selectEl.appendChild(option);
+      });
+    }
+
+    // 恢复之前的选中状态，如果当前选中的 relativeUrl 仍存在
+    if (activeL1Path && activeL1Path !== 'all') {
+      const exists = Array.from(selectEl.options).some(opt => opt.value === activeL1Path);
+      if (exists) {
+        selectEl.value = activeL1Path;
+        selectEl.classList.add('active');
+      } else {
+        activeL1Path = 'all';
+        selectEl.value = 'all';
+        selectEl.classList.remove('active');
+      }
+    } else {
+      selectEl.value = 'all';
+      selectEl.classList.remove('active');
+    }
+  }
+
   // ==================== 搜索逻辑 ====================
 
   function performSearch(query) {
@@ -512,20 +573,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       const pathMatch = item.relativeUrl.toLowerCase().includes(query);
       if (!nameMatch && !pathMatch) return false;
 
-      // 应用过滤器
-      if (activeFilter === 'all') return true;
-      if (activeFilter === 'folder') return item.type === 'folder';
-      if (activeFilter === 'l1') return item.level === 1;
+      // 1. 应用 Level 1 目录过滤器
+      if (activeL1Path !== 'all') {
+        const isMatchL1 = item.relativeUrl === activeL1Path || item.relativeUrl.startsWith(activeL1Path + '/');
+        if (!isMatchL1) return false;
+      }
 
-      // 文件类型过滤
-      if (item.type !== 'file') return false;
-      const ext = item.name.split('.').pop().toLowerCase();
-      
-      if (activeFilter === 'word') return ext === 'doc' || ext === 'docx';
-      if (activeFilter === 'excel') return ext === 'xls' || ext === 'xlsx';
-      if (activeFilter === 'ppt') return ext === 'ppt' || ext === 'pptx';
-      if (activeFilter === 'pdf') return ext === 'pdf';
-      if (activeFilter === 'prism') return ext === 'prism' || ext === 'pzfx';
+      // 2. 应用类型过滤器
+      if (activeFilter === 'folder') {
+        if (item.type !== 'folder') return false;
+      } else if (activeFilter !== 'all') {
+        // 文件类型过滤
+        if (item.type !== 'file') return false;
+        const ext = item.name.split('.').pop().toLowerCase();
+        
+        if (activeFilter === 'word' && ext !== 'doc' && ext !== 'docx') return false;
+        if (activeFilter === 'excel' && ext !== 'xls' && ext !== 'xlsx') return false;
+        if (activeFilter === 'ppt' && ext !== 'ppt' && ext !== 'pptx') return false;
+        if (activeFilter === 'pdf' && ext !== 'pdf') return false;
+        if (activeFilter === 'prism' && ext !== 'prism' && ext !== 'pzfx') return false;
+      }
 
       return true;
     });
@@ -700,6 +767,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (namespace === 'local') {
       if (changes.subtree_cache || changes.favorites || changes.l1_cache || changes.sync_status) {
         await loadDataFromStorage();
+        populateL1FilterDropdown();
         renderFavorites();
         renderDirectoryTree();
       }

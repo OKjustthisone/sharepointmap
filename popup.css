@@ -630,3 +630,55 @@ body {
   color: var(--primary-cyan);
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
 }
+
+/* 下拉选择框过滤样式 */
+.filter-select-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.filter-select {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 4px 22px 4px 10px; /* 预留右侧自定义箭头空间 */
+  border-radius: 20px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.filter-select-wrapper::after {
+  content: "▼";
+  font-size: 8px;
+  color: var(--text-muted);
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+}
+
+.filter-select:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.filter-select.active {
+  background: rgba(0, 240, 255, 0.15);
+  border-color: var(--primary-cyan);
+  color: var(--primary-cyan);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+}
+
+.filter-select.active + ::after {
+  color: var(--primary-cyan);
+}
+
+.filter-select option {
+  background-color: #12131a;
+  color: #fff;
+}
