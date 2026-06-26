@@ -18,8 +18,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const directoryToggleArrow = document.getElementById('directoryToggleArrow');
   const syncTimeSpan = document.getElementById('syncTime');
   const toastContainer = document.getElementById('toastContainer');
+  const l1FilterSelect = document.getElementById('l1FilterSelect');
 
-  // 全局数据状态缓存
+  // 全局数据状态缓存与过滤器状态
+  let activeFilter = 'all';
+  let activeL1Path = 'all';
   let spConfig = null;
   let favorites = [];
   let l1Cache = null;
@@ -70,10 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // 搜索过滤器类型状态
-  let activeFilter = 'all';
-  let activeL1Path = 'all';
-  const l1FilterSelect = document.getElementById('l1FilterSelect');
+  // 搜索过滤芯片事件绑定
 
   const filterChips = document.querySelectorAll('.filter-chip');
   filterChips.forEach(chip => {
