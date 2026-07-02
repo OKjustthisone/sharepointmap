@@ -648,6 +648,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchResultsList.innerHTML = '';
     const results = [];
 
+    // 模糊/宽容字符匹配辅助函数
+    function fuzzyMatch(target, q) {
+      if (!target) return false;
+      const t = target.toLowerCase();
+      
+      // 1. 直截了当的直接包含匹配 (最快路径)
+      if (t.includes(q)) return true;
+
+      // 2. 忽略/替换特殊分隔符 (如 -, _, /, \, ., 空格) 为单个空格进行规范化匹配
+      const normalize = (str) => str.replace(/[-_/\s.]+/g, ' ').trim();
+      const normT = normalize(t);
+      const normQ = normalize(q);
+      if (normT.includes(normQ)) return true;
+
+      // 3. 无序多词匹配 (输入多个空格分割的词，只要目标包含所有词即可匹配，不限顺序)
+      const qWords = normQ.split(' ').filter(w => w.length > 0);
+      if (qWords.length > 1) {
+        const allWordsMatched = qWords.every(word => normT.includes(word));
+        if (allWordsMatched) return true;
+      }
+
+      // 4. 紧凑无缝匹配 (完全剔除所有分隔符进行连贯匹配，如 "efcmouse" 匹配 "EFC-Mouse")
+      const strip = (str) => str.replace(/[-_/\s.]+/g, '');
+      const strippedT = strip(t);
+      const strippedQ = strip(q);
+      if (strippedT.includes(strippedQ)) return true;
+
+      return false;
+    }
+
     // A. 收集所有可供搜索的节点
     // 1. 收集 1 级目录
     if (l1Cache && l1Cache.items) {
@@ -680,8 +710,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // B. 进行模糊搜索匹配与过滤器筛选
     const filtered = searchPool.filter(item => {
-      const nameMatch = item.name.toLowerCase().includes(query);
-      const pathMatch = item.relativeUrl.toLowerCase().includes(query);
+      const nameMatch = fuzzyMatch(item.name, query);
+      const pathMatch = fuzzyMatch(item.relativeUrl, query);
       if (!nameMatch && !pathMatch) return false;
 
       // 1. 应用 Level 1 目录过滤器
