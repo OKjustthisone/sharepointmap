@@ -209,6 +209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         populateL1FilterDropdown();
         renderFavorites();
         renderDirectoryTree();
+        updateFavoritesSyncProgressDisplay();
       } catch (err) {
         console.error(err);
         directoryTree.innerHTML = `
@@ -230,6 +231,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             populateL1FilterDropdown();
             renderFavorites();
             renderDirectoryTree();
+            updateFavoritesSyncProgressDisplay();
             // 在数据后台同步完成后，如果刚才有恢复搜索，重新执行一下搜索
             const query = uiState.searchQuery || '';
             if (query) {
@@ -243,6 +245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       populateL1FilterDropdown();
       renderFavorites();
       renderDirectoryTree();
+      updateFavoritesSyncProgressDisplay();
 
       // 恢复搜索输入与触发搜索
       const query = uiState.searchQuery || '';
@@ -348,8 +351,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const icon = isFolder ? (isExpanded ? '📂' : '📁') : '📄';
 
     let syncBtnHtml = '';
+    const isNodeSyncing = syncStatus[item.id] && syncStatus[item.id].status === 'syncing';
     if (isFolder && item.level === 1 && isFav) {
-      syncBtnHtml = `<button class="action-btn sync-btn" title="同步该目录下的子树">同步 🔄</button>`;
+      const loadingClass = isNodeSyncing ? 'loading' : '';
+      syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="同步该目录下的子树">同步 🔄</button>`;
     }
 
     nodeEl.innerHTML = `
@@ -520,17 +525,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         tipEl.style.marginLeft = `${(depth - 1) * 16 + 10}px`;
         
         if (isSyncing) {
-          const progress = syncStatus[parentItem.id];
-          const folderCount = progress ? progress.folderCount : 0;
-          const nodeCount = progress ? progress.nodeCount : 0;
-          const currentFolder = progress ? progress.currentFolder : '';
-          
           tipEl.innerHTML = `
             <div class="sync-progress-wrapper" style="display: flex; align-items: center; gap: 8px;">
               <div class="spinner mini"></div>
-              <span>⏳ 正在后台同步: 已扫描 <strong>${folderCount}</strong> 个目录，发现 <strong>${nodeCount}</strong> 个项目...</span>
+              <span>⏳ 正在后台同步中...</span>
             </div>
-            ${currentFolder ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; padding-left: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;" title="${currentFolder}">当前: ${currentFolder}</div>` : ''}
           `;
         } else if (isFav) {
           tipEl.innerHTML = `
@@ -640,6 +639,51 @@ document.addEventListener('DOMContentLoaded', async () => {
       selectEl.value = 'all';
       selectEl.classList.remove('active');
     }
+  }
+
+  // 渲染并更新快捷收藏部分的同步进度显示
+  function updateFavoritesSyncProgressDisplay() {
+    const progressEl = document.getElementById('favSyncProgress');
+    if (!progressEl) return;
+
+    if (!syncStatus) {
+      progressEl.classList.add('hide');
+      progressEl.innerHTML = '';
+      return;
+    }
+
+    const activeSyncs = Object.values(syncStatus).filter(s => s && s.status === 'syncing');
+    
+    if (activeSyncs.length === 0) {
+      progressEl.classList.add('hide');
+      progressEl.innerHTML = '';
+      return;
+    }
+
+    // 汇总进度
+    let totalFolders = 0;
+    let totalNodes = 0;
+    let currentPath = '';
+
+    activeSyncs.forEach(s => {
+      totalFolders += s.folderCount || 0;
+      totalNodes += s.nodeCount || 0;
+      if (s.currentFolder) {
+        // 取最后一个路径节点做简短展示，避免溢出
+        const parts = s.currentFolder.split('/');
+        currentPath = parts[parts.length - 1] || s.currentFolder;
+      }
+    });
+
+    progressEl.classList.remove('hide');
+
+    let progressText = `⏳ 更新中: 📂${totalFolders} 📄${totalNodes}`;
+    if (currentPath) {
+      progressText += ` (${currentPath})`;
+    }
+    
+    progressEl.innerHTML = progressText;
+    progressEl.title = `正在更新：已扫描 ${totalFolders} 个文件夹，发现 ${totalNodes} 个文件${currentPath ? `。当前: ${currentPath}` : ''}`;
   }
 
   // ==================== 搜索逻辑 ====================
@@ -941,6 +985,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         populateL1FilterDropdown();
         renderFavorites();
         renderDirectoryTree();
+        updateFavoritesSyncProgressDisplay();
       }
     }
   });

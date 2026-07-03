@@ -693,3 +693,17 @@ body {
   background-color: #12131a;
   color: #fff;
 }
+
+.hide {
+  display: none !important;
+}
+
+.fav-sync-progress {
+  font-size: 11px;
+  color: var(--primary-cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+  display: inline-block;
+}

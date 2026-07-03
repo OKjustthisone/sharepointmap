@@ -75,7 +75,10 @@
       <div id="defaultViews">
         <!-- 收藏夹部分 -->
         <section id="favoritesSection" class="content-section">
-          <h3 class="section-title">⭐ 快捷收藏 <span id="favCount"></span></h3>
+          <div class="favorites-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h3 class="section-title" style="margin-bottom: 0;">⭐ 快捷收藏 <span id="favCount"></span></h3>
+            <span id="favSyncProgress" class="fav-sync-progress hide"></span>
+          </div>
           <div id="favoritesList" class="empty-list-placeholder">
             暂无收藏。点击下方文件夹旁的 ⭐ 即可加入收藏夹。
           </div>

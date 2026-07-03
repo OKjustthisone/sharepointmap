@@ -2,18 +2,65 @@
 // 引入共享同步逻辑
 importScripts('sync-helper.js');
 
-// 监听安装事件，设置 7 天定时任务
+// 计算下一个工作日 10 点的时间戳
+function getNextWeekday10AM(now) {
+  const date = new Date(now);
+  date.setHours(10, 0, 0, 0);
+
+  // 如果当前时间已经过了今天的 10 点，则移到明天
+  if (date.getTime() <= now) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  // 过滤掉周六 (6) 和周日 (0)，如果是周末则持续往后移直到周一
+  while (date.getDay() === 0 || date.getDay() === 6) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  return date.getTime();
+}
+
+function scheduleNextWeekdayAlarm() {
+  const nextTime = getNextWeekday10AM(Date.now());
+  chrome.alarms.create('weekday_sync_alarm', { when: nextTime });
+  console.log('Scheduled next weekday sync for:', new Date(nextTime).toString());
+}
+
+// 检查并确保工作日 10 点的 Alarm 已设置
+chrome.alarms.get('weekday_sync_alarm', (alarm) => {
+  if (!alarm) {
+    scheduleNextWeekdayAlarm();
+  } else {
+    console.log('Weekday sync alarm already scheduled for:', new Date(alarm.scheduledTime).toString());
+  }
+});
+
+// 监听安装事件，设置定时任务
 chrome.runtime.onInstalled.addListener(() => {
   console.log('SharePoint Quick Access extension installed.');
   // 设置 7 天定时任务 (7 * 24 * 60 分钟)
   chrome.alarms.create('sync_all_data', { periodInMinutes: 7 * 24 * 60 });
+  // 设置工作日 10 点定时同步
+  scheduleNextWeekdayAlarm();
 });
 
 // 监听 Alarm 触发
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'sync_all_data') {
+  if (alarm.name === 'weekday_sync_alarm') {
+    console.log('Weekday 10 AM sync alarm triggered. Syncing all favorited directories...');
+    performAllSync()
+      .then(() => {
+        console.log('Weekday 10 AM sync completed successfully.');
+      })
+      .catch((err) => {
+        console.error('Weekday 10 AM sync failed:', err);
+      })
+      .finally(() => {
+        // 无论成功还是失败，都安排下一次的工作日同步
+        scheduleNextWeekdayAlarm();
+      });
+  } else if (alarm.name === 'sync_all_data') {
     console.log('Scheduled alarm triggered. Syncing all SharePoint data...');
-    // 在后台静默运行定时更新（如果 Cookie 丢失则会自动被捕获并忽略，等用户打开 Popup 时会自动基于 UI 线程 Cookie 重新更新）
     performAllSync();
   }
 });
