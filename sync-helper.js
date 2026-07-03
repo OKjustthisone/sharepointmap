@@ -203,7 +203,7 @@ async function syncLevel1() {
   }
 }
 
-// 2. 递归抓取已收藏的 1 级文件夹子树 (BFS)
+// 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (通过 OData 展开与并发请求，极大缩短同步时间)
 async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   const { sp_config } = await chrome.storage.local.get('sp_config');
   if (!sp_config || !sp_config.siteUrl) {
@@ -213,128 +213,123 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   const { siteUrl } = sp_config;
   const baseUrl = siteUrl.split('/sites/')[0];
 
-  let lastProgressWrite = 0;
-  const updateSyncProgress = async (count, nodes, currentPath, force = false) => {
-    const now = Date.now();
-    if (!force && now - lastProgressWrite < 300) {
-      return;
+  let folderCount = 0;
+  let nodeCount = 0;
+  let lastReportedFolder = l1FolderRelativeUrl;
+  let isSyncActive = true;
+
+  // 定期将当前进度写入 storage，彻底避免多任务并发时的写冲突，节省性能
+  const progressTimer = setInterval(async () => {
+    if (!isSyncActive) return;
+    try {
+      const statusData = await chrome.storage.local.get('sync_status');
+      const syncStatus = statusData.sync_status || {};
+      const pathParts = lastReportedFolder.split('/');
+      const currentFolderName = pathParts[pathParts.length - 1] || lastReportedFolder;
+
+      syncStatus[l1FolderId] = {
+        status: 'syncing',
+        folderCount: folderCount,
+        nodeCount: nodeCount,
+        currentFolder: currentFolderName
+      };
+      await chrome.storage.local.set({ sync_status: syncStatus });
+    } catch (err) {
+      console.warn('Failed to write progress:', err);
     }
-    lastProgressWrite = now;
-
-    const statusData = await chrome.storage.local.get('sync_status');
-    const syncStatus = statusData.sync_status || {};
-    const pathParts = currentPath.split('/');
-    const currentFolderName = pathParts[pathParts.length - 1] || currentPath;
-
-    syncStatus[l1FolderId] = {
-      status: 'syncing',
-      folderCount: count,
-      nodeCount: nodes,
-      currentFolder: currentFolderName
-    };
-    await chrome.storage.local.set({ sync_status: syncStatus });
-  };
+  }, 300);
 
   try {
-    await updateSyncProgress(0, 0, l1FolderRelativeUrl, true);
     await setupCookieDNRRule(siteUrl);
 
     const folderTreeCache = {};
     const queue = [l1FolderRelativeUrl];
-    let nodeCount = 0;
     const allDiscoveredItems = {};
     
     const MAX_FOLDERS = 500; 
-    let folderCount = 0;
+    const CONCURRENCY = 6; // 并发请求数，控制在安全合理的范围内以防 429 频控
 
     const headers = {
       'Accept': 'application/json;odata=nometadata',
       'Content-Type': 'application/json'
     };
 
-    while (queue.length > 0) {
-      const currentRelativeUrl = queue.shift();
-      folderCount++;
+    while (queue.length > 0 && folderCount < MAX_FOLDERS) {
+      // 一次性取出 CONCURRENCY 个要处理的路径
+      const batch = queue.splice(0, CONCURRENCY);
 
-      if (folderCount > MAX_FOLDERS) {
-        console.warn(`Subtree sync exceeded limit (${MAX_FOLDERS}). Stopping.`);
-        break;
-      }
+      await Promise.all(batch.map(async (currentRelativeUrl) => {
+        folderCount++;
 
-      // 【修复】使用 cleanRelativePathUrl 对相对路径进行安全转义，保留关键的斜杠 /，防止报 404
-      const foldersUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, 'Folders');
-      const filesUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, 'Files');
-      
-      try {
-        const [foldersRes, filesRes] = await Promise.all([
-          fetch(foldersUrl, { method: 'GET', headers }),
-          fetch(filesUrl, { method: 'GET', headers })
-        ]);
-
-        if (!foldersRes.ok || !filesRes.ok) {
-          const errMsg = `Failed to fetch subfolder data for: ${currentRelativeUrl}, HTTP ${foldersRes.status} / ${filesRes.status}`;
-          console.error(errMsg);
-          if (currentRelativeUrl === l1FolderRelativeUrl) {
-            throw new Error(`获取该文件夹的子目录失败 (HTTP ${foldersRes.status}/${filesRes.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
-          }
-          continue;
+        // 拼接展开子目录与文件的 URL，减少 50% 请求次数
+        let folderUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, '');
+        if (folderUrl.endsWith('/')) {
+          folderUrl = folderUrl.slice(0, -1);
         }
+        folderUrl += '?$expand=Folders,Files';
 
-        const foldersData = await foldersRes.json();
-        const filesData = await filesRes.json();
+        try {
+          const res = await fetch(folderUrl, { method: 'GET', headers });
+          if (!res.ok) {
+            console.error(`Failed to fetch subfolder: ${currentRelativeUrl}, HTTP ${res.status}`);
+            if (currentRelativeUrl === l1FolderRelativeUrl) {
+              throw new Error(`获取该文件夹的子目录失败 (HTTP ${res.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
+            }
+            return;
+          }
 
-        const subFolders = foldersData.value || [];
-        const subFiles = filesData.value || [];
+          const data = await res.json();
+          const subFolders = data.Folders || [];
+          const subFiles = data.Files || [];
 
-        // 按名称字母升序自然排序
-        subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
-        subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+          // 自然排序
+          subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+          subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
 
-        const parsedFolders = subFolders
-          .filter(item => item.Name !== 'Forms')
-          .map(item => {
-            queue.push(item.ServerRelativeUrl);
-            nodeCount++;
-            const folderObj = {
+          const parsedFolders = subFolders
+            .filter(item => item.Name !== 'Forms')
+            .map(item => {
+              queue.push(item.ServerRelativeUrl);
+              const folderObj = {
+                id: item.UniqueId,
+                name: item.Name,
+                type: 'folder',
+                relativeUrl: item.ServerRelativeUrl,
+                webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+              };
+              allDiscoveredItems[item.UniqueId] = folderObj;
+              return folderObj;
+            });
+
+          const parsedFiles = subFiles.map(item => {
+            const fileObj = {
               id: item.UniqueId,
               name: item.Name,
-              type: 'folder',
+              type: 'file',
               relativeUrl: item.ServerRelativeUrl,
               webUrl: `${baseUrl}${item.ServerRelativeUrl}`
             };
-            allDiscoveredItems[item.UniqueId] = folderObj;
-            return folderObj;
+            allDiscoveredItems[item.UniqueId] = fileObj;
+            return fileObj;
           });
 
-        const parsedFiles = subFiles.map(item => {
-          nodeCount++;
-          const fileObj = {
-            id: item.UniqueId,
-            name: item.Name,
-            type: 'file',
-            relativeUrl: item.ServerRelativeUrl,
-            webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+          folderTreeCache[currentRelativeUrl] = {
+            folders: parsedFolders,
+            files: parsedFiles
           };
-          allDiscoveredItems[item.UniqueId] = fileObj;
-          return fileObj;
-        });
 
-        folderTreeCache[currentRelativeUrl] = {
-          folders: parsedFolders,
-          files: parsedFiles
-        };
+          nodeCount += parsedFolders.length + parsedFiles.length;
+          lastReportedFolder = currentRelativeUrl;
 
-        // 实时报告同步进度
-        await updateSyncProgress(folderCount, nodeCount, currentRelativeUrl);
-
-      } catch (err) {
-        console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
-        if (currentRelativeUrl === l1FolderRelativeUrl) {
-          throw err;
+        } catch (err) {
+          console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
+          if (currentRelativeUrl === l1FolderRelativeUrl) {
+            throw err;
+          }
         }
-      }
+      }));
 
-      // 延迟 50ms 避开限流
+      // 每次并发批处理后留微弱间隔，配合 SharePoint 的防爬虫/频控策略
       await new Promise(resolve => setTimeout(resolve, 50));
     }
 
@@ -373,6 +368,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     return nodeCount;
 
   } finally {
+    isSyncActive = false;
+    clearInterval(progressTimer);
+    
     await clearDNRRules();
     // 清除正在同步的状态
     const statusData = await chrome.storage.local.get('sync_status');
