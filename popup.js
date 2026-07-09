@@ -148,14 +148,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==================== 初始化与数据加载 ====================
 
   async function initApp() {
-    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'sync_status', 'ui_state']);
+    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'ui_state']);
     spConfig = data.sp_config;
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
-    syncStatus = data.sync_status || {};
+    syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
-    // 迁移清理：删除旧版合并的 subtree_cache 键，释放存储空间
+    // 迁移清理：删除旧版合并的 subtree_cache 和 sync_status 键，释放存储空间
     chrome.storage.local.remove('subtree_cache');
+    chrome.storage.local.remove('sync_status');
 
     // 恢复 UI 状态变量
     const uiState = data.ui_state || {};
@@ -272,12 +273,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     return subtreeCache;
   }
 
+  // 辅助函数：从本地存储中聚合所有一级目录的同步状态
+  async function loadSyncStatusFromStorage() {
+    const allData = await chrome.storage.local.get(null);
+    const syncStatus = {};
+    Object.keys(allData).forEach(key => {
+      if (key.startsWith('sync_status_')) {
+        const folderId = key.substring('sync_status_'.length);
+        syncStatus[folderId] = allData[key];
+      }
+    });
+    return syncStatus;
+  }
+
   // 重新从 storage 读取最新数据
   async function loadDataFromStorage() {
-    const data = await chrome.storage.local.get(['favorites', 'l1_cache', 'sync_status']);
+    const data = await chrome.storage.local.get(['favorites', 'l1_cache']);
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
-    syncStatus = data.sync_status || {};
+    syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
     updateSyncTimeDisplay();
   }
@@ -1005,7 +1019,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   chrome.storage.onChanged.addListener(async (changes, namespace) => {
     if (namespace === 'local') {
       const hasSubtreeChange = Object.keys(changes).some(key => key.startsWith('subtree_cache_'));
-      if (hasSubtreeChange || changes.favorites || changes.l1_cache || changes.sync_status) {
+      const hasSyncStatusChange = Object.keys(changes).some(key => key.startsWith('sync_status_'));
+      if (hasSubtreeChange || hasSyncStatusChange || changes.favorites || changes.l1_cache) {
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();

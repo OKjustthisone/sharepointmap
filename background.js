@@ -2,6 +2,16 @@
 // 引入共享同步逻辑
 importScripts('sync-helper.js');
 
+// 启动时清除任何遗留的正在同步状态，防止 Service Worker 重启或崩溃后状态卡在“同步中”
+chrome.storage.local.get(null, (allData) => {
+  const keysToRemove = Object.keys(allData).filter(key => key.startsWith('sync_status_') || key === 'sync_status');
+  if (keysToRemove.length > 0) {
+    chrome.storage.local.remove(keysToRemove, () => {
+      console.log('[SharePoint Map] Cleared stale sync statuses on startup:', keysToRemove);
+    });
+  }
+});
+
 // 计算下一个工作日 10 点的时间戳
 function getNextWeekday10AM(now) {
   const date = new Date(now);

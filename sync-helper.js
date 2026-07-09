@@ -217,23 +217,24 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   let nodeCount = 0;
   let lastReportedFolder = l1FolderRelativeUrl;
   let isSyncActive = true;
+  const syncStatusKey = 'sync_status_' + l1FolderId;
 
   // 定期将当前进度写入 storage，彻底避免多任务并发时的写冲突，节省性能
   const progressTimer = setInterval(async () => {
     if (!isSyncActive) return;
     try {
-      const statusData = await chrome.storage.local.get('sync_status');
-      const syncStatus = statusData.sync_status || {};
       const pathParts = lastReportedFolder.split('/');
       const currentFolderName = pathParts[pathParts.length - 1] || lastReportedFolder;
 
-      syncStatus[l1FolderId] = {
-        status: 'syncing',
-        folderCount: folderCount,
-        nodeCount: nodeCount,
-        currentFolder: currentFolderName
-      };
-      await chrome.storage.local.set({ sync_status: syncStatus });
+      if (!isSyncActive) return;
+      await chrome.storage.local.set({
+        [syncStatusKey]: {
+          status: 'syncing',
+          folderCount: folderCount,
+          nodeCount: nodeCount,
+          currentFolder: currentFolderName
+        }
+      });
     } catch (err) {
       console.warn('Failed to write progress:', err);
     }
@@ -242,17 +243,16 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   try {
     // 立即写入初始同步状态，避免 300ms 延迟导致看不到同步状态
     try {
-      const statusData = await chrome.storage.local.get('sync_status');
-      const syncStatus = statusData.sync_status || {};
       const pathParts = l1FolderRelativeUrl.split('/');
       const currentFolderName = pathParts[pathParts.length - 1] || l1FolderRelativeUrl;
-      syncStatus[l1FolderId] = {
-        status: 'syncing',
-        folderCount: 0,
-        nodeCount: 0,
-        currentFolder: currentFolderName
-      };
-      await chrome.storage.local.set({ sync_status: syncStatus });
+      await chrome.storage.local.set({
+        [syncStatusKey]: {
+          status: 'syncing',
+          folderCount: 0,
+          nodeCount: 0,
+          currentFolder: currentFolderName
+        }
+      });
     } catch (err) {
       console.warn('Failed to write initial sync status:', err);
     }
@@ -627,11 +627,12 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     clearInterval(progressTimer);
     
     await clearDNRRules();
-    // 清除正在同步的状态
-    const statusData = await chrome.storage.local.get('sync_status');
-    const syncStatus = statusData.sync_status || {};
-    delete syncStatus[l1FolderId];
-    await chrome.storage.local.set({ sync_status: syncStatus });
+    // 清除正在同步的状态 (直接删除对应的 Key)
+    try {
+      await chrome.storage.local.remove(syncStatusKey);
+    } catch (err) {
+      console.warn('Failed to clear sync status in finally:', err);
+    }
   }
 }
 
