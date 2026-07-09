@@ -369,12 +369,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const isNodeSyncing = syncStatus[item.id] && syncStatus[item.id].status === 'syncing';
     if (isFolder && item.level === 1 && isFav) {
       const loadingClass = isNodeSyncing ? 'loading' : '';
-      syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="同步该目录下的子树">同步 🔄</button>`;
+      const syncTitle = isNodeSyncing ? '正在同步子树...' : '同步该目录下的子树 🔄';
+      syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="${syncTitle}">🔄</button>`;
     }
 
     let favBtnHtml = '';
     if (!isFavList) {
-      favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}">${isFav ? '⭐' : '☆'}</button>`;
+      const favTitle = isFav ? '取消快捷收藏' : '加入快捷收藏';
+      favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}" title="${favTitle}">${isFav ? '⭐' : '☆'}</button>`;
     }
 
     nodeEl.innerHTML = `
@@ -385,8 +387,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       </div>
       <div class="node-right ${isFav ? 'is-fav' : ''}">
         ${syncBtnHtml}
-        <button class="action-btn open-btn" data-url="${item.webUrl}">打开 🌐</button>
-        <button class="action-btn copy-btn" data-url="${item.webUrl}">复制 📋</button>
+        <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页 🌐">🌐</button>
+        <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接 🔗">🔗</button>
         ${favBtnHtml}
       </div>
     `;
@@ -844,9 +846,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="result-path" title="${item.relativeUrl}">路径: ${parentPath}</div>
           </div>
           <div class="node-right ${isFav ? 'is-fav' : ''}">
-            <button class="action-btn open-btn" data-url="${item.webUrl}">打开 🌐</button>
-            <button class="action-btn copy-btn" data-url="${item.webUrl}">复制 📋</button>
-            <button class="fav-btn ${isFav ? 'active' : ''}">${isFav ? '⭐' : '☆'}</button>
+            <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页 🌐">🌐</button>
+            <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接 🔗">🔗</button>
+            <button class="fav-btn ${isFav ? 'active' : ''}" title="${isFav ? '取消快捷收藏' : '加入快捷收藏'}">${isFav ? '⭐' : '☆'}</button>
           </div>
         `;
 
