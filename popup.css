@@ -431,6 +431,37 @@ body {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+/* 一级目录同步按钮 */
+.l1-sync-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.l1-sync-btn:hover {
+  background: var(--glass-border-hover);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.l1-sync-btn.loading {
+  pointer-events: none;
+}
+
+.l1-sync-btn.loading .sync-icon {
+  animation: spin 1s linear infinite !important;
+  display: inline-block;
+}
+
 .fav-btn {
   background: none !important;
   border: none !important;
