@@ -243,9 +243,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     await setupCookieDNRRule(siteUrl);
 
     // 获取历史缓存
-    const storageData = await chrome.storage.local.get('subtree_cache');
-    const subtreeCache = storageData.subtree_cache || {};
-    const cachedData = subtreeCache[l1FolderId];
+    const storageKey = 'subtree_cache_' + l1FolderId;
+    const storageData = await chrome.storage.local.get(storageKey);
+    const cachedData = storageData[storageKey];
     const oldTree = cachedData?.tree;
     const lastSyncTime = cachedData?.last_updated || 0;
 
@@ -519,12 +519,13 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     }
 
     // 更新总 subtree 缓存
-    subtreeCache[l1FolderId] = {
-      last_updated: Date.now(),
-      tree: folderTreeCache
-    };
-
-    await chrome.storage.local.set({ subtree_cache: subtreeCache });
+    const storageKey = 'subtree_cache_' + l1FolderId;
+    await chrome.storage.local.set({
+      [storageKey]: {
+        last_updated: Date.now(),
+        tree: folderTreeCache
+      }
+    });
     return nodeCount;
 
   } finally {

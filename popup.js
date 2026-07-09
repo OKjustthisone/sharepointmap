@@ -148,12 +148,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==================== 初始化与数据加载 ====================
 
   async function initApp() {
-    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'subtree_cache', 'sync_status', 'ui_state']);
+    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'sync_status', 'ui_state']);
     spConfig = data.sp_config;
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
-    subtreeCache = data.subtree_cache || {};
     syncStatus = data.sync_status || {};
+    subtreeCache = await loadSubtreeCacheFromStorage();
+    // 迁移清理：删除旧版合并的 subtree_cache 键，释放存储空间
+    chrome.storage.local.remove('subtree_cache');
 
     // 恢复 UI 状态变量
     const uiState = data.ui_state || {};
@@ -257,13 +259,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // 辅助函数：从本地存储中聚合所有一级目录的子树缓存
+  async function loadSubtreeCacheFromStorage() {
+    const allData = await chrome.storage.local.get(null);
+    const subtreeCache = {};
+    Object.keys(allData).forEach(key => {
+      if (key.startsWith('subtree_cache_')) {
+        const l1Id = key.substring('subtree_cache_'.length);
+        subtreeCache[l1Id] = allData[key];
+      }
+    });
+    return subtreeCache;
+  }
+
   // 重新从 storage 读取最新数据
   async function loadDataFromStorage() {
-    const data = await chrome.storage.local.get(['favorites', 'l1_cache', 'subtree_cache', 'sync_status']);
+    const data = await chrome.storage.local.get(['favorites', 'l1_cache', 'sync_status']);
     favorites = data.favorites || [];
     l1Cache = data.l1_cache;
-    subtreeCache = data.subtree_cache || {};
     syncStatus = data.sync_status || {};
+    subtreeCache = await loadSubtreeCacheFromStorage();
     updateSyncTimeDisplay();
   }
 
@@ -937,7 +952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 如果被删除的是 1 级目录，同时从 subtreeCache 中移除以释放存储空间
       if (item.type === 'folder' && item.level === 1) {
         delete subtreeCache[item.id];
-        await chrome.storage.local.set({ subtree_cache: subtreeCache });
+        await chrome.storage.local.remove('subtree_cache_' + item.id);
       }
     }
 
@@ -980,7 +995,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 监听本地存储变化，实现实时响应刷新
   chrome.storage.onChanged.addListener(async (changes, namespace) => {
     if (namespace === 'local') {
-      if (changes.subtree_cache || changes.favorites || changes.l1_cache || changes.sync_status) {
+      const hasSubtreeChange = Object.keys(changes).some(key => key.startsWith('subtree_cache_'));
+      if (hasSubtreeChange || changes.favorites || changes.l1_cache || changes.sync_status) {
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();
