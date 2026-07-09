@@ -240,6 +240,23 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   }, 300);
 
   try {
+    // 立即写入初始同步状态，避免 300ms 延迟导致看不到同步状态
+    try {
+      const statusData = await chrome.storage.local.get('sync_status');
+      const syncStatus = statusData.sync_status || {};
+      const pathParts = l1FolderRelativeUrl.split('/');
+      const currentFolderName = pathParts[pathParts.length - 1] || l1FolderRelativeUrl;
+      syncStatus[l1FolderId] = {
+        status: 'syncing',
+        folderCount: 0,
+        nodeCount: 0,
+        currentFolder: currentFolderName
+      };
+      await chrome.storage.local.set({ sync_status: syncStatus });
+    } catch (err) {
+      console.warn('Failed to write initial sync status:', err);
+    }
+
     await setupCookieDNRRule(siteUrl);
 
     // 获取历史缓存
@@ -519,7 +536,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     }
 
     // 更新总 subtree 缓存
-    const storageKey = 'subtree_cache_' + l1FolderId;
     await chrome.storage.local.set({
       [storageKey]: {
         last_updated: Date.now(),

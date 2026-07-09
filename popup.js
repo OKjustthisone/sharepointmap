@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     sortedFavorites.forEach(fav => {
-      const favNode = createTreeNodeElement(fav, 1);
+      const favNode = createTreeNodeElement(fav, 1, true);
       favoritesList.appendChild(favNode);
     });
   }
@@ -339,7 +339,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 创建树节点 DOM 元素
-  function createTreeNodeElement(item, depth) {
+  function createTreeNodeElement(item, depth, isFavList = false) {
     const container = document.createElement('div');
     container.className = 'tree-node-wrapper';
 
@@ -372,6 +372,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="同步该目录下的子树">同步 🔄</button>`;
     }
 
+    let favBtnHtml = '';
+    if (!isFavList) {
+      favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}">${isFav ? '⭐' : '☆'}</button>`;
+    }
+
     nodeEl.innerHTML = `
       <div class="node-left">
         <span class="${toggleClass}">${toggleIcon}</span>
@@ -382,7 +387,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         ${syncBtnHtml}
         <button class="action-btn open-btn" data-url="${item.webUrl}">打开 🌐</button>
         <button class="action-btn copy-btn" data-url="${item.webUrl}">复制 📋</button>
-        <button class="fav-btn ${isFav ? 'active' : ''}">${isFav ? '⭐' : '☆'}</button>
+        ${favBtnHtml}
       </div>
     `;
 
@@ -407,10 +412,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // 2. 收藏按钮事件
-    nodeEl.querySelector('.fav-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleFavorite(item);
-    });
+    if (!isFavList) {
+      nodeEl.querySelector('.fav-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(item);
+      });
+    }
 
     // 2.5 同步子树按钮事件
     if (isFolder && item.level === 1 && isFav) {
