@@ -203,14 +203,14 @@ async function syncLevel1() {
   }
 }
 
-// 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (通过 OData 展开与并发请求，极大缩短同步时间)
+// 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (支持增量和全量更新)
 async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   const { sp_config } = await chrome.storage.local.get('sp_config');
-  if (!sp_config || !sp_config.siteUrl) {
-    throw new Error('站点配置丢失，无法抓取子树');
+  if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
+    throw new Error('站点配置或文档库名称丢失，无法抓取子树');
   }
 
-  const { siteUrl } = sp_config;
+  const { siteUrl, libraryName } = sp_config;
   const baseUrl = siteUrl.split('/sites/')[0];
 
   let folderCount = 0;
@@ -242,95 +242,258 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
   try {
     await setupCookieDNRRule(siteUrl);
 
-    const folderTreeCache = {};
-    const queue = [l1FolderRelativeUrl];
+    // 获取历史缓存
+    const storageData = await chrome.storage.local.get('subtree_cache');
+    const subtreeCache = storageData.subtree_cache || {};
+    const cachedData = subtreeCache[l1FolderId];
+    const oldTree = cachedData?.tree;
+    const lastSyncTime = cachedData?.last_updated || 0;
+
+    // 如果没有历史缓存，或者缓存的根目录路径与当前路径不符，强制进行首次全量同步
+    const forceFullSync = !oldTree || !cachedData || !oldTree[l1FolderRelativeUrl];
+    let isFullSync = forceFullSync || lastSyncTime === 0;
+
+    let folderTreeCache = {};
     const allDiscoveredItems = {};
-    
-    const MAX_FOLDERS = 500; 
-    const CONCURRENCY = 6; // 并发请求数，控制在安全合理的范围内以防 429 频控
+    const MAX_FOLDERS = 500;
+    const CONCURRENCY = 6;
 
     const headers = {
       'Accept': 'application/json;odata=nometadata',
       'Content-Type': 'application/json'
     };
 
-    while (queue.length > 0 && folderCount < MAX_FOLDERS) {
-      // 一次性取出 CONCURRENCY 个要处理的路径
-      const batch = queue.splice(0, CONCURRENCY);
+    let changedFolders = new Set();
 
-      await Promise.all(batch.map(async (currentRelativeUrl) => {
-        folderCount++;
+    if (!isFullSync) {
+      console.log(`[SharePoint Map] Performing incremental sync for subtree: ${l1FolderRelativeUrl} since ${new Date(lastSyncTime).toISOString()}`);
+      // 查询在此之后修改过的所有文件和文件夹，以定位发生过变动的目录
+      const isoString = new Date(lastSyncTime).toISOString();
+      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=Modified gt datetime'${isoString}'&$select=FileRef,FileSystemObjectType,UniqueId&$top=5000`;
 
-        // 拼接展开子目录与文件的 URL，减少 50% 请求次数
-        let folderUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, '');
-        if (folderUrl.endsWith('/')) {
-          folderUrl = folderUrl.slice(0, -1);
-        }
-        folderUrl += '?$expand=Folders,Files';
-
-        try {
-          const res = await fetch(folderUrl, { method: 'GET', headers });
-          if (!res.ok) {
-            console.error(`Failed to fetch subfolder: ${currentRelativeUrl}, HTTP ${res.status}`);
-            if (currentRelativeUrl === l1FolderRelativeUrl) {
-              throw new Error(`获取该文件夹的子目录失败 (HTTP ${res.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
-            }
-            return;
-          }
-
+      try {
+        const res = await fetch(modifiedItemsUrl, { method: 'GET', headers });
+        if (res.ok) {
           const data = await res.json();
-          const subFolders = data.Folders || [];
-          const subFiles = data.Files || [];
+          const items = data.value || [];
+          
+          items.forEach(item => {
+            const path = item.FileRef;
+            if (!path) return;
+            
+            // 过滤：只保留当前 1 级目录下的变动
+            const isUnderL1 = path === l1FolderRelativeUrl || path.startsWith(l1FolderRelativeUrl + '/');
+            if (!isUnderL1) return;
 
-          // 自然排序
-          subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
-          subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+            if (item.FileSystemObjectType === 1) {
+              // 变动项本身是文件夹，直接加入重拉取列表
+              changedFolders.add(path);
+            } else {
+              // 变动项是文件，将其父级文件夹加入重拉取列表
+              const lastSlashIndex = path.lastIndexOf('/');
+              if (lastSlashIndex > 0) {
+                const parentPath = path.substring(0, lastSlashIndex);
+                if (parentPath === l1FolderRelativeUrl || parentPath.startsWith(l1FolderRelativeUrl + '/')) {
+                  changedFolders.add(parentPath);
+                }
+              }
+            }
+          });
+        } else {
+          console.warn(`Incremental query failed with HTTP ${res.status}. Falling back to full sync.`);
+          isFullSync = true;
+        }
+      } catch (err) {
+        console.warn('Incremental query failed. Falling back to full sync:', err);
+        isFullSync = true;
+      }
+    }
 
-          const parsedFolders = subFolders
-            .filter(item => item.Name !== 'Forms')
-            .map(item => {
-              queue.push(item.ServerRelativeUrl);
-              const folderObj = {
+    if (isFullSync) {
+      console.log(`[SharePoint Map] Performing full sync for subtree: ${l1FolderRelativeUrl}`);
+      const queue = [l1FolderRelativeUrl];
+
+      while (queue.length > 0 && folderCount < MAX_FOLDERS) {
+        // 一次性取出 CONCURRENCY 个要处理的路径
+        const batch = queue.splice(0, CONCURRENCY);
+
+        await Promise.all(batch.map(async (currentRelativeUrl) => {
+          folderCount++;
+
+          // 拼接展开子目录与文件的 URL，一次请求获取该目录下全部子项
+          let folderUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, '');
+          if (folderUrl.endsWith('/')) {
+            folderUrl = folderUrl.slice(0, -1);
+          }
+          folderUrl += '?$expand=Folders,Files';
+
+          try {
+            const res = await fetch(folderUrl, { method: 'GET', headers });
+            if (!res.ok) {
+              console.error(`Failed to fetch subfolder: ${currentRelativeUrl}, HTTP ${res.status}`);
+              if (currentRelativeUrl === l1FolderRelativeUrl) {
+                throw new Error(`获取该文件夹的子目录失败 (HTTP ${res.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
+              }
+              return;
+            }
+
+            const data = await res.json();
+            const subFolders = data.Folders || [];
+            const subFiles = data.Files || [];
+
+            // 自然排序
+            subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+            subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+
+            const parsedFolders = subFolders
+              .filter(item => item.Name !== 'Forms')
+              .map(item => {
+                queue.push(item.ServerRelativeUrl);
+                const folderObj = {
+                  id: item.UniqueId,
+                  name: item.Name,
+                  type: 'folder',
+                  relativeUrl: item.ServerRelativeUrl,
+                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                };
+                allDiscoveredItems[item.UniqueId] = folderObj;
+                return folderObj;
+              });
+
+            const parsedFiles = subFiles.map(item => {
+              const fileObj = {
                 id: item.UniqueId,
                 name: item.Name,
-                type: 'folder',
+                type: 'file',
                 relativeUrl: item.ServerRelativeUrl,
                 webUrl: `${baseUrl}${item.ServerRelativeUrl}`
               };
-              allDiscoveredItems[item.UniqueId] = folderObj;
-              return folderObj;
+              allDiscoveredItems[item.UniqueId] = fileObj;
+              return fileObj;
             });
 
-          const parsedFiles = subFiles.map(item => {
-            const fileObj = {
-              id: item.UniqueId,
-              name: item.Name,
-              type: 'file',
-              relativeUrl: item.ServerRelativeUrl,
-              webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+            folderTreeCache[currentRelativeUrl] = {
+              folders: parsedFolders,
+              files: parsedFiles
             };
-            allDiscoveredItems[item.UniqueId] = fileObj;
-            return fileObj;
-          });
 
-          folderTreeCache[currentRelativeUrl] = {
-            folders: parsedFolders,
-            files: parsedFiles
-          };
+            nodeCount += parsedFolders.length + parsedFiles.length;
+            lastReportedFolder = currentRelativeUrl;
 
-          nodeCount += parsedFolders.length + parsedFiles.length;
-          lastReportedFolder = currentRelativeUrl;
+          } catch (err) {
+            console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
+            if (currentRelativeUrl === l1FolderRelativeUrl) {
+              throw err;
+            }
+          }
+        }));
 
-        } catch (err) {
-          console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
-          if (currentRelativeUrl === l1FolderRelativeUrl) {
-            throw err;
+        // 每次并发批处理后留微弱间隔，配合 SharePoint 的防爬虫策略
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } else {
+      // 增量同步路径：拷贝原缓存，按需仅拉取有变动的文件夹
+      folderTreeCache = { ...oldTree };
+      const changedFoldersArray = Array.from(changedFolders);
+
+      if (changedFoldersArray.length > 0) {
+        console.log(`[SharePoint Map] Incremental sync: ${changedFoldersArray.length} folders modified. Updating them...`);
+        const queue = [...changedFoldersArray];
+
+        while (queue.length > 0) {
+          const batch = queue.splice(0, CONCURRENCY);
+
+          await Promise.all(batch.map(async (folderPath) => {
+            folderCount++;
+
+            let folderUrl = cleanRelativePathUrl(siteUrl, folderPath, '');
+            if (folderUrl.endsWith('/')) {
+              folderUrl = folderUrl.slice(0, -1);
+            }
+            folderUrl += '?$expand=Folders,Files';
+
+            try {
+              const res = await fetch(folderUrl, { method: 'GET', headers });
+              if (!res.ok) {
+                console.warn(`Failed to fetch modified subfolder: ${folderPath}, HTTP ${res.status}`);
+                // 若该目录已从 SharePoint 移除，忽略即可，垃圾回收会处理它
+                return;
+              }
+
+              const data = await res.json();
+              const subFolders = data.Folders || [];
+              const subFiles = data.Files || [];
+
+              subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+              subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+
+              const parsedFolders = subFolders
+                .filter(item => item.Name !== 'Forms')
+                .map(item => {
+                  const folderObj = {
+                    id: item.UniqueId,
+                    name: item.Name,
+                    type: 'folder',
+                    relativeUrl: item.ServerRelativeUrl,
+                    webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                  };
+                  allDiscoveredItems[item.UniqueId] = folderObj;
+                  return folderObj;
+                });
+
+              const parsedFiles = subFiles.map(item => {
+                const fileObj = {
+                  id: item.UniqueId,
+                  name: item.Name,
+                  type: 'file',
+                  relativeUrl: item.ServerRelativeUrl,
+                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                };
+                allDiscoveredItems[item.UniqueId] = fileObj;
+                return fileObj;
+              });
+
+              folderTreeCache[folderPath] = {
+                folders: parsedFolders,
+                files: parsedFiles
+              };
+
+              nodeCount += parsedFolders.length + parsedFiles.length;
+              lastReportedFolder = folderPath;
+
+            } catch (err) {
+              console.error(`Error requesting modified folder data for ${folderPath}:`, err);
+            }
+          }));
+
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        // 垃圾回收：清理已在 SharePoint 中被删除的文件夹缓存
+        const reachable = new Set([l1FolderRelativeUrl]);
+        const scanQueue = [l1FolderRelativeUrl];
+        while (scanQueue.length > 0) {
+          const current = scanQueue.shift();
+          const node = folderTreeCache[current];
+          if (node && node.folders) {
+            node.folders.forEach(f => {
+              if (!reachable.has(f.relativeUrl)) {
+                reachable.add(f.relativeUrl);
+                scanQueue.push(f.relativeUrl);
+              }
+            });
           }
         }
-      }));
 
-      // 每次并发批处理后留微弱间隔，配合 SharePoint 的防爬虫/频控策略
-      await new Promise(resolve => setTimeout(resolve, 50));
+        // 剔除不可达路径
+        Object.keys(folderTreeCache).forEach(path => {
+          if (!reachable.has(path)) {
+            delete folderTreeCache[path];
+          }
+        });
+      } else {
+        console.log('[SharePoint Map] Incremental sync: No files/folders modified since last sync.');
+      }
     }
 
     // 自动更新收藏夹中可能发生重命名或路径变更的深层项目
@@ -355,10 +518,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
       }
     }
 
-    // 读取并更新缓存
-    const storageData = await chrome.storage.local.get('subtree_cache');
-    const subtreeCache = storageData.subtree_cache || {};
-
+    // 更新总 subtree 缓存
     subtreeCache[l1FolderId] = {
       last_updated: Date.now(),
       tree: folderTreeCache
