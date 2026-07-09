@@ -271,7 +271,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     let isFullSync = forceFullSync || lastSyncTime === 0;
 
     let folderTreeCache = {};
-    const allDiscoveredItems = {};
     const MAX_FOLDERS = 500;
     const CONCURRENCY = 6;
 
@@ -284,7 +283,27 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 
     if (!isFullSync) {
       console.log(`[SharePoint Map] Performing incremental sync for subtree: ${l1FolderRelativeUrl} since ${new Date(lastSyncTime).toISOString()}`);
-      // 查询在此之后修改过的所有文件和文件夹，以定位发生过变动的目录
+      
+      // 先把旧的缓存树完全复制过来，后续对其进行局部修改和垃圾回收
+      folderTreeCache = { ...oldTree };
+
+      // 从原有缓存中构建 id -> { path, type, parent } 映射，用于识别重命名和移动
+      const cacheIdToPath = {};
+      Object.keys(oldTree).forEach(parentPath => {
+        const node = oldTree[parentPath];
+        if (node.folders) {
+          node.folders.forEach(f => {
+            cacheIdToPath[f.id] = { path: f.relativeUrl, type: 'folder', parent: parentPath };
+          });
+        }
+        if (node.files) {
+          node.files.forEach(f => {
+            cacheIdToPath[f.id] = { path: f.relativeUrl, type: 'file', parent: parentPath };
+          });
+        }
+      });
+
+      // 查询在此时间之后修改过的所有文件和文件夹
       const isoString = new Date(lastSyncTime).toISOString();
       const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=Modified gt datetime'${isoString}'&$select=FileRef,FileSystemObjectType,UniqueId&$top=5000`;
 
@@ -295,24 +314,56 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
           const items = data.value || [];
           
           items.forEach(item => {
-            const path = item.FileRef;
-            if (!path) return;
+            const newPath = item.FileRef;
+            if (!newPath) return;
             
             // 过滤：只保留当前 1 级目录下的变动
-            const isUnderL1 = path === l1FolderRelativeUrl || path.startsWith(l1FolderRelativeUrl + '/');
+            const isUnderL1 = newPath === l1FolderRelativeUrl || newPath.startsWith(l1FolderRelativeUrl + '/');
             if (!isUnderL1) return;
 
+            const oldInfo = cacheIdToPath[item.UniqueId];
+            const hasPathChanged = oldInfo && oldInfo.path !== newPath;
+
             if (item.FileSystemObjectType === 1) {
-              // 变动项本身是文件夹，直接加入重拉取列表
-              changedFolders.add(path);
-            } else {
-              // 变动项是文件，将其父级文件夹加入重拉取列表
-              const lastSlashIndex = path.lastIndexOf('/');
-              if (lastSlashIndex > 0) {
-                const parentPath = path.substring(0, lastSlashIndex);
+              // 1. 文件夹变动
+              if (hasPathChanged) {
+                console.log(`[SharePoint Map] Incremental sync - Folder renamed/moved: ${oldInfo.path} -> ${newPath}`);
+                
+                // 将新、旧 parent 目录都加入重拉取列表，以刷新子项列表
+                const newParentPath = newPath.substring(0, newPath.lastIndexOf('/'));
+                changedFolders.add(newParentPath);
+                changedFolders.add(oldInfo.parent);
+
+                // 从缓存中删除该文件夹及其下所有子目录旧路径的缓存键
+                Object.keys(folderTreeCache).forEach(pathKey => {
+                  if (pathKey === oldInfo.path || pathKey.startsWith(oldInfo.path + '/')) {
+                    delete folderTreeCache[pathKey];
+                  }
+                });
+
+                // 将新文件夹路径本身加入重拉取，启动递归抓取其子树
+                changedFolders.add(newPath);
+              } else {
+                // 没有路径变动，只需更新文件夹本身
+                changedFolders.add(newPath);
+                // 同时也应拉取父级以确保最新
+                const parentPath = newPath.substring(0, newPath.lastIndexOf('/'));
                 if (parentPath === l1FolderRelativeUrl || parentPath.startsWith(l1FolderRelativeUrl + '/')) {
                   changedFolders.add(parentPath);
                 }
+              }
+            } else {
+              // 2. 文件变动
+              const parentPath = newPath.substring(0, newPath.lastIndexOf('/'));
+              if (parentPath === l1FolderRelativeUrl || parentPath.startsWith(l1FolderRelativeUrl + '/')) {
+                changedFolders.add(parentPath);
+              }
+
+              if (hasPathChanged) {
+                console.log(`[SharePoint Map] Incremental sync - File renamed/moved: ${oldInfo.path} -> ${newPath}`);
+                // 新旧父目录均重拉，以便删除旧文件项、添加新文件项
+                changedFolders.add(parentPath);
+                changedFolders.add(oldInfo.parent);
               }
             }
           });
@@ -373,7 +424,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                   relativeUrl: item.ServerRelativeUrl,
                   webUrl: `${baseUrl}${item.ServerRelativeUrl}`
                 };
-                allDiscoveredItems[item.UniqueId] = folderObj;
                 return folderObj;
               });
 
@@ -385,7 +435,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                 relativeUrl: item.ServerRelativeUrl,
                 webUrl: `${baseUrl}${item.ServerRelativeUrl}`
               };
-              allDiscoveredItems[item.UniqueId] = fileObj;
               return fileObj;
             });
 
@@ -415,12 +464,23 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 
       if (changedFoldersArray.length > 0) {
         console.log(`[SharePoint Map] Incremental sync: ${changedFoldersArray.length} folders modified. Updating them...`);
+        
         const queue = [...changedFoldersArray];
+        const fetchedFolders = new Set();
 
         while (queue.length > 0) {
-          const batch = queue.splice(0, CONCURRENCY);
+          // 过滤掉已经抓取过的路径，防止环路或重复请求
+          const nextBatch = [];
+          while (queue.length > 0 && nextBatch.length < CONCURRENCY) {
+            const path = queue.shift();
+            if (!fetchedFolders.has(path)) {
+              nextBatch.push(path);
+            }
+          }
+          if (nextBatch.length === 0) continue;
 
-          await Promise.all(batch.map(async (folderPath) => {
+          await Promise.all(nextBatch.map(async (folderPath) => {
+            fetchedFolders.add(folderPath);
             folderCount++;
 
             let folderUrl = cleanRelativePathUrl(siteUrl, folderPath, '');
@@ -447,6 +507,10 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
               const parsedFolders = subFolders
                 .filter(item => item.Name !== 'Forms')
                 .map(item => {
+                  // 如果该子文件夹在缓存中不存在且不在已抓取列表中，说明是新增或重命名得到的，加入队列进行深度同步
+                  if (!folderTreeCache[item.ServerRelativeUrl] && !fetchedFolders.has(item.ServerRelativeUrl)) {
+                    queue.push(item.ServerRelativeUrl);
+                  }
                   const folderObj = {
                     id: item.UniqueId,
                     name: item.Name,
@@ -454,7 +518,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                     relativeUrl: item.ServerRelativeUrl,
                     webUrl: `${baseUrl}${item.ServerRelativeUrl}`
                   };
-                  allDiscoveredItems[item.UniqueId] = folderObj;
                   return folderObj;
                 });
 
@@ -466,7 +529,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                   relativeUrl: item.ServerRelativeUrl,
                   webUrl: `${baseUrl}${item.ServerRelativeUrl}`
                 };
-                allDiscoveredItems[item.UniqueId] = fileObj;
                 return fileObj;
               });
 
@@ -512,6 +574,22 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
         console.log('[SharePoint Map] Incremental sync: No files/folders modified since last sync.');
       }
     }
+
+    // 从最终的 folderTreeCache 中重新构建完整的 allDiscoveredItems 映射，确保自愈机制能覆盖到未变动的项目
+    const allDiscoveredItems = {};
+    Object.keys(folderTreeCache).forEach(parentPath => {
+      const node = folderTreeCache[parentPath];
+      if (node.folders) {
+        node.folders.forEach(f => {
+          allDiscoveredItems[f.id] = f;
+        });
+      }
+      if (node.files) {
+        node.files.forEach(f => {
+          allDiscoveredItems[f.id] = f;
+        });
+      }
+    });
 
     // 自动更新收藏夹中可能发生重命名或路径变更的深层项目
     const favData = await chrome.storage.local.get('favorites');
