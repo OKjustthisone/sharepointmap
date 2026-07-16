@@ -921,10 +921,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     try {
       // 先对 URL 进行解码，再通过 encodeURI 进行标准化转码，确保空格、中文等字符在复制和打开时是一致的转码链接
-      return encodeURI(decodeURI(targetUrl));
+      let decoded = targetUrl;
+      try {
+        decoded = decodeURIComponent(targetUrl);
+      } catch (de) {
+        try {
+          decoded = decodeURI(targetUrl);
+        } catch (de2) {}
+      }
+
+      let mainUrl = decoded;
+      let suffix = '';
+      const qIndex = decoded.indexOf('?web=1');
+      if (qIndex !== -1) {
+        mainUrl = decoded.substring(0, qIndex);
+        suffix = decoded.substring(qIndex);
+      }
+
+      // 特殊字符转义：把文件名中可能出现的 # 替换为 %23，避免浏览器将其作为 Hash 片段截断
+      const encodedMain = encodeURI(mainUrl).replace(/#/g, '%23');
+      return encodedMain + suffix;
     } catch (e) {
       console.warn('URL decoding/encoding failed:', e);
-      return encodeURI(targetUrl);
+      return encodeURI(targetUrl).replace(/#/g, '%23');
     }
   }
 
