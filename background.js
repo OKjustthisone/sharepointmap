@@ -83,14 +83,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true; // 异步通道
   }
-
   if (request.action === 'sync_level1') {
-    syncLevel1()
+    syncLevel1(request.configId)
       .then((items) => sendResponse({ success: true, count: items.length }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true; // 异步通道
   }
-
   if (request.action === 'sync_subtree') {
     const { folderId, relativeUrl } = request;
     syncSubtree(folderId, relativeUrl)

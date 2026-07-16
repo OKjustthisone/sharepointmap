@@ -313,3 +313,135 @@ input:focus {
   top: 0;
   font-size: 14px;
 }
+
+.hide {
+  display: none !important;
+}
+
+/* 配置项列表 */
+.configs-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-item {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.config-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.config-item.active-config {
+  border-color: rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.03);
+}
+
+.config-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 75%;
+}
+
+.config-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-item-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.config-active-badge {
+  font-size: 10px;
+  background: rgba(0, 240, 255, 0.2);
+  color: var(--primary-cyan);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.config-item-details {
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  color: #fff;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--glass-border-focus);
+}
+
+.icon-btn.delete-btn:hover {
+  background: rgba(255, 46, 99, 0.2);
+  border-color: rgba(255, 46, 99, 0.4);
+  color: #ff2e63;
+}
+
+/* 子表单标题 */
+.form-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--primary-cyan);
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: 15px;
+}
+
+/* 按钮组 */
+.form-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.form-buttons .btn {
+  flex: 1;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--glass-border-focus);
+}

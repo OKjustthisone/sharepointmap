@@ -742,3 +742,50 @@ body {
   max-width: 250px;
   display: inline-block;
 }
+
+/* 站点/文件库切换 Tab 栏 */
+.tabs-container {
+  display: flex;
+  overflow-x: auto;
+  padding: 0 16px;
+  background: rgba(8, 9, 14, 0.4);
+  border-bottom: 1px solid var(--glass-border);
+  gap: 8px;
+  scrollbar-width: none; /* Firefox */
+}
+.tabs-container::-webkit-scrollbar {
+  display: none; /* Safari & Chrome */
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: var(--primary-cyan);
+  font-weight: 600;
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary-cyan), var(--primary-blue));
+  border-radius: 2px;
+}

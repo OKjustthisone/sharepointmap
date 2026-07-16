@@ -99,13 +99,33 @@ async function setupCookieDNRRule(siteUrl) {
 }
 
 // 1. 同步并缓存 1 级目录
-async function syncLevel1() {
-  const { sp_config } = await chrome.storage.local.get('sp_config');
-  if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
-    throw new Error('请先在配置页面设置站点 URL 和文档库名称');
+async function syncLevel1(configId) {
+  await migrateConfigsIfNeeded();
+
+  let targetConfigId = configId;
+  if (!targetConfigId) {
+    const data = await chrome.storage.local.get('current_config_id');
+    targetConfigId = data.current_config_id;
   }
 
-  const { siteUrl, libraryName } = sp_config;
+  let siteUrl, libraryName;
+  if (targetConfigId) {
+    const data = await chrome.storage.local.get('sp_configs');
+    const configs = data.sp_configs || [];
+    const config = configs.find(c => c.id === targetConfigId);
+    if (!config) {
+      throw new Error('未找到对应的站点配置');
+    }
+    siteUrl = config.siteUrl;
+    libraryName = config.libraryName;
+  } else {
+    const { sp_config } = await chrome.storage.local.get('sp_config');
+    if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
+      throw new Error('请先在配置页面设置站点 URL 和文档库名称');
+    }
+    siteUrl = sp_config.siteUrl;
+    libraryName = sp_config.libraryName;
+  }
   
   try {
     await setupCookieDNRRule(siteUrl);
@@ -168,7 +188,9 @@ async function syncLevel1() {
     });
 
     // 自动更新收藏夹中可能发生重命名或路径变更的 1 级项目
-    const { favorites } = await chrome.storage.local.get('favorites');
+    const favKey = targetConfigId ? `favorites_${targetConfigId}` : 'favorites';
+    const favData = await chrome.storage.local.get(favKey);
+    const favorites = favData[favKey];
     if (favorites && Array.isArray(favorites)) {
       let updatedFavs = false;
       favorites.forEach(fav => {
@@ -183,14 +205,15 @@ async function syncLevel1() {
         }
       });
       if (updatedFavs) {
-        await chrome.storage.local.set({ favorites: favorites });
+        await chrome.storage.local.set({ [favKey]: favorites });
         console.log('[SharePoint Map] Self-healed Level 1 items in favorites.');
       }
     }
 
     // 写入本地存储
+    const cacheKey = targetConfigId ? `l1_cache_${targetConfigId}` : 'l1_cache';
     await chrome.storage.local.set({
-      l1_cache: {
+      [cacheKey]: {
         last_updated: Date.now(),
         items: items
       }
@@ -202,15 +225,54 @@ async function syncLevel1() {
     await clearDNRRules();
   }
 }
-
 // 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (支持增量和全量更新)
 async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
-  const { sp_config } = await chrome.storage.local.get('sp_config');
-  if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
+  await migrateConfigsIfNeeded();
+
+  let siteUrl = '';
+  let libraryName = '';
+  let targetConfigId = '';
+
+  const data = await chrome.storage.local.get(['sp_configs', 'sp_config', 'current_config_id']);
+  const configs = data.sp_configs || [];
+  
+  for (const config of configs) {
+    const cacheData = await chrome.storage.local.get(`l1_cache_${config.id}`);
+    const l1Cache = cacheData[`l1_cache_${config.id}`];
+    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
+      siteUrl = config.siteUrl;
+      libraryName = config.libraryName;
+      targetConfigId = config.id;
+      break;
+    }
+  }
+
+  if (!siteUrl && data.sp_config) {
+    const l1CacheData = await chrome.storage.local.get('l1_cache');
+    const l1Cache = l1CacheData.l1_cache;
+    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
+      siteUrl = data.sp_config.siteUrl;
+      libraryName = data.sp_config.libraryName;
+    }
+  }
+
+  if (!siteUrl) {
+    const currentId = data.current_config_id || (configs[0] ? configs[0].id : '');
+    const config = configs.find(c => c.id === currentId);
+    if (config) {
+      siteUrl = config.siteUrl;
+      libraryName = config.libraryName;
+      targetConfigId = config.id;
+    } else if (data.sp_config) {
+      siteUrl = data.sp_config.siteUrl;
+      libraryName = data.sp_config.libraryName;
+    }
+  }
+
+  if (!siteUrl || !libraryName) {
     throw new Error('站点配置或文档库名称丢失，无法抓取子树');
   }
 
-  const { siteUrl, libraryName } = sp_config;
   const baseUrl = siteUrl.split('/sites/')[0];
 
   let folderCount = 0;
@@ -639,28 +701,60 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 // 3. 后台定时器全量重新同步主函数
 async function performAllSync() {
   try {
-    const { sp_config } = await chrome.storage.local.get('sp_config');
-    if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
-      console.warn('SharePoint config is not completed. Sync aborted.');
-      return;
-    }
-
-    // A. 同步 1 级目录
-    console.log('Syncing Level 1...');
-    const l1Items = await syncLevel1();
+    await migrateConfigsIfNeeded();
+    const { sp_configs } = await chrome.storage.local.get('sp_configs');
     
-    // B. 同步所有已收藏 of 1 级目录子树
-    const { favorites } = await chrome.storage.local.get('favorites');
-    if (favorites && Array.isArray(favorites)) {
-      const l1Folders = favorites.filter(fav => fav.level === 1 && fav.type === 'folder');
-      console.log(`Syncing ${l1Folders.length} favorited Level 1 subtrees...`);
-      for (const favFolder of l1Folders) {
-        const matchingL1 = l1Items.find(item => item.id === favFolder.id);
-        if (matchingL1) {
-          try {
-            await syncSubtree(favFolder.id, matchingL1.relativeUrl);
-          } catch (err) {
-            console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
+    if (sp_configs && Array.isArray(sp_configs) && sp_configs.length > 0) {
+      console.log(`[SharePoint Map] performAllSync: starting sync for ${sp_configs.length} configurations...`);
+      for (const config of sp_configs) {
+        try {
+          console.log(`[SharePoint Map] Syncing config "${config.name}" (${config.id})...`);
+          
+          // A. 同步 1 级目录
+          const l1Items = await syncLevel1(config.id);
+          
+          // B. 同步所有已收藏
+          const favKey = `favorites_${config.id}`;
+          const favData = await chrome.storage.local.get(favKey);
+          const favorites = favData[favKey];
+          if (favorites && Array.isArray(favorites)) {
+            const l1Folders = favorites.filter(fav => fav.level === 1 && fav.type === 'folder');
+            console.log(`[SharePoint Map] Syncing ${l1Folders.length} favorited Level 1 subtrees for "${config.name}"...`);
+            for (const favFolder of l1Folders) {
+              const matchingL1 = l1Items.find(item => item.id === favFolder.id);
+              if (matchingL1) {
+                try {
+                  await syncSubtree(favFolder.id, matchingL1.relativeUrl);
+                } catch (err) {
+                  console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
+                }
+              }
+            }
+          }
+        } catch (configErr) {
+          console.error(`Failed to sync config ${config.name} (${config.id}):`, configErr);
+        }
+      }
+    } else {
+      // 兼容旧版
+      const { sp_config } = await chrome.storage.local.get('sp_config');
+      if (!sp_config || !sp_config.siteUrl || !sp_config.libraryName) {
+        console.warn('SharePoint config is not completed. Sync aborted.');
+        return;
+      }
+      console.log('Syncing Level 1...');
+      const l1Items = await syncLevel1();
+      const { favorites } = await chrome.storage.local.get('favorites');
+      if (favorites && Array.isArray(favorites)) {
+        const l1Folders = favorites.filter(fav => fav.level === 1 && fav.type === 'folder');
+        for (const favFolder of l1Folders) {
+          const matchingL1 = l1Items.find(item => item.id === favFolder.id);
+          if (matchingL1) {
+            try {
+              await syncSubtree(favFolder.id, matchingL1.relativeUrl);
+            } catch (err) {
+              console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
+            }
           }
         }
       }

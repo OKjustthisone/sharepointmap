@@ -20,11 +20,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const toastContainer = document.getElementById('toastContainer');
   const l1FilterSelect = document.getElementById('l1FilterSelect');
   const filterChips = document.querySelectorAll('.filter-chip');
+  const tabsContainer = document.getElementById('tabsContainer');
 
   // 全局数据状态缓存与过滤器状态
   let activeFilter = 'all';
   let activeL1Path = 'all';
   let spConfig = null;
+  let spConfigs = [];
+  let currentConfigId = '';
   let favorites = [];
   let l1Cache = null;
   let subtreeCache = {};
@@ -61,8 +64,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.stopPropagation();
     syncL1Btn.classList.add('loading');
     showToast('🔄 已在后台启动 1 级目录同步...');
-    
-    chrome.runtime.sendMessage({ action: 'sync_level1' }, (response) => {
+    chrome.runtime.sendMessage({ action: 'sync_level1', configId: currentConfigId }, (response) => {
       syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
         console.error('Background sync level 1 failed:', chrome.runtime.lastError);
@@ -148,18 +150,48 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ==================== 初始化与数据加载 ====================
 
   async function initApp() {
-    const data = await chrome.storage.local.get(['sp_config', 'favorites', 'l1_cache', 'ui_state']);
-    spConfig = data.sp_config;
-    favorites = data.favorites || [];
-    l1Cache = data.l1_cache;
+    // A. 运行配置迁移（如果需要）
+    await migrateConfigsIfNeeded();
+
+    // B. 获取配置和当前激活的配置 ID
+    const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config', 'ui_state']);
+    spConfigs = configData.sp_configs || [];
+    currentConfigId = configData.current_config_id || '';
+    
+    if (!currentConfigId && configData.sp_config) {
+      spConfig = configData.sp_config;
+    } else {
+      spConfig = spConfigs.find(c => c.id === currentConfigId) || null;
+    }
+
+    // C. 根据激活的配置加载对应的 favorites 和 l1_cache
+    const cacheKeys = [];
+    if (currentConfigId) {
+      cacheKeys.push(`favorites_${currentConfigId}`);
+      cacheKeys.push(`l1_cache_${currentConfigId}`);
+    } else {
+      cacheKeys.push('favorites');
+      cacheKeys.push('l1_cache');
+    }
+
+    const data = await chrome.storage.local.get(cacheKeys);
+    
+    if (currentConfigId) {
+      favorites = data[`favorites_${currentConfigId}`] || [];
+      l1Cache = data[`l1_cache_${currentConfigId}`];
+    } else {
+      favorites = data.favorites || [];
+      l1Cache = data.l1_cache;
+    }
+
     syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
-    // 迁移清理：删除旧版合并的 subtree_cache 和 sync_status 键，释放存储空间
-    chrome.storage.local.remove('subtree_cache');
-    chrome.storage.local.remove('sync_status');
+    
+    // 渲染切换 Tab 栏
+    renderTabs();
 
     // 恢复 UI 状态变量
-    const uiState = data.ui_state || {};
+    const uiState = configData.ui_state || {};
     expandedState = uiState.expandedState || {};
     isTreeExpanded = uiState.isTreeExpanded || false;
     activeFilter = uiState.activeFilter || 'all';
@@ -172,6 +204,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           配置未设置。请点击右上方 ⚙️ 按钮进入设置页面配置站点。
         </div>
       `;
+      tabsContainer.classList.add('hide');
       return;
     }
 
@@ -206,7 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         </div>
       `;
       try {
-        await syncLevel1();
+        await syncLevel1(currentConfigId);
         showToast('✨ 1 级目录同步成功！');
         await loadDataFromStorage();
         populateL1FilterDropdown();
@@ -227,7 +260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isExpired = Date.now() - l1Cache.last_updated > 7 * 24 * 60 * 60 * 1000;
       if (isExpired) {
         showToast('🔄 正在自动更新已过期的缓存...');
-        syncLevel1()
+        syncLevel1(currentConfigId)
           .then(async () => {
             console.log('Auto refresh of Level 1 completed.');
             await loadDataFromStorage();
@@ -235,7 +268,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderFavorites();
             renderDirectoryTree();
             updateFavoritesSyncProgressDisplay();
-            // 在数据后台同步完成后，如果刚才有恢复搜索，重新执行一下搜索
             const query = uiState.searchQuery || '';
             if (query) {
               performSearch(query);
@@ -258,6 +290,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         performSearch(query);
       }
     }
+  }
+
+  function renderTabs() {
+    if (spConfigs.length <= 1) {
+      tabsContainer.classList.add('hide');
+      return;
+    }
+
+    tabsContainer.classList.remove('hide');
+    tabsContainer.innerHTML = '';
+
+    spConfigs.forEach(config => {
+      const btn = document.createElement('button');
+      btn.className = `tab-btn ${config.id === currentConfigId ? 'active' : ''}`;
+      btn.innerText = config.name || '未命名站点';
+      btn.title = `${config.siteUrl} (${config.libraryName})`;
+      btn.addEventListener('click', async () => {
+        if (config.id === currentConfigId) return;
+        currentConfigId = config.id;
+        await chrome.storage.local.set({ current_config_id: config.id });
+        
+        // 切换配置时清除界面部分状态
+        expandedState = {};
+        isTreeExpanded = false;
+        
+        // 重新初始化并加载新站点的数据
+        await initApp();
+      });
+      tabsContainer.appendChild(btn);
+    });
   }
 
   // 辅助函数：从本地存储中聚合所有一级目录的子树缓存
@@ -286,13 +348,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     return syncStatus;
   }
 
-  // 重新从 storage 读取最新数据
+    // 重新从 storage 读取最新数据
   async function loadDataFromStorage() {
-    const data = await chrome.storage.local.get(['favorites', 'l1_cache']);
-    favorites = data.favorites || [];
-    l1Cache = data.l1_cache;
+    const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config']);
+    spConfigs = configData.sp_configs || [];
+    currentConfigId = configData.current_config_id || '';
+    if (currentConfigId) {
+      spConfig = spConfigs.find(c => c.id === currentConfigId) || null;
+    } else {
+      spConfig = configData.sp_config;
+    }
+
+    const cacheKeys = [];
+    if (currentConfigId) {
+      cacheKeys.push(`favorites_${currentConfigId}`);
+      cacheKeys.push(`l1_cache_${currentConfigId}`);
+    } else {
+      cacheKeys.push('favorites');
+      cacheKeys.push('l1_cache');
+    }
+
+    const data = await chrome.storage.local.get(cacheKeys);
+    if (currentConfigId) {
+      favorites = data[`favorites_${currentConfigId}`] || [];
+      l1Cache = data[`l1_cache_${currentConfigId}`];
+    } else {
+      favorites = data.favorites || [];
+      l1Cache = data.l1_cache;
+    }
+
     syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
+    
+    renderTabs();
     updateSyncTimeDisplay();
   }
 
@@ -690,7 +778,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    const activeSyncs = Object.values(syncStatus).filter(s => s && s.status === 'syncing');
+    const activeSyncs = [];
+    Object.keys(syncStatus).forEach(folderId => {
+      const isFavorited = favorites.some(fav => fav.id === folderId);
+      if (isFavorited && syncStatus[folderId] && syncStatus[folderId].status === 'syncing') {
+        activeSyncs.push(syncStatus[folderId]);
+      }
+    });
     
     if (activeSyncs.length === 0) {
       progressEl.classList.add('hide');
@@ -999,7 +1093,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 保存至 storage 并重绘界面
-    await chrome.storage.local.set({ favorites: favorites });
+    const favKey = currentConfigId ? `favorites_${currentConfigId}` : 'favorites';
+    await chrome.storage.local.set({ [favKey]: favorites });
     renderFavorites();
     renderDirectoryTree();
     
@@ -1039,7 +1134,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (namespace === 'local') {
       const hasSubtreeChange = Object.keys(changes).some(key => key.startsWith('subtree_cache_'));
       const hasSyncStatusChange = Object.keys(changes).some(key => key.startsWith('sync_status_'));
-      if (hasSubtreeChange || hasSyncStatusChange || changes.favorites || changes.l1_cache) {
+      const hasFavoritesChange = changes.favorites || Object.keys(changes).some(key => key.startsWith('favorites_'));
+      const hasL1CacheChange = changes.l1_cache || Object.keys(changes).some(key => key.startsWith('l1_cache_'));
+      
+      if (hasSubtreeChange || hasSyncStatusChange || hasFavoritesChange || hasL1CacheChange || changes.current_config_id || changes.sp_configs) {
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();
