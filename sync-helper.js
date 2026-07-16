@@ -1,6 +1,42 @@
 // sync-helper.js
 // 共享同步模块：支持在 options.js、popup.js 以及 background.js 中使用。
 
+// 核心配置迁移函数
+async function migrateConfigsIfNeeded() {
+  const data = await chrome.storage.local.get(['sp_config', 'sp_configs', 'current_config_id', 'l1_cache', 'favorites']);
+  
+  if (!data.sp_configs && data.sp_config && data.sp_config.siteUrl) {
+    const defaultId = 'config_default';
+    const siteUrl = data.sp_config.siteUrl;
+    const libraryName = data.sp_config.libraryName || 'Shared Documents';
+    const siteOrigin = data.sp_config.siteOrigin || new URL(siteUrl).origin;
+    
+    const defaultConfigs = [{
+      id: defaultId,
+      name: libraryName === 'Shared Documents' ? '默认文档库' : libraryName,
+      siteUrl: siteUrl,
+      libraryName: libraryName,
+      siteOrigin: siteOrigin
+    }];
+    
+    const updates = {
+      sp_configs: defaultConfigs,
+      current_config_id: defaultId
+    };
+    
+    if (data.l1_cache) {
+      updates[`l1_cache_${defaultId}`] = data.l1_cache;
+    }
+    
+    if (data.favorites) {
+      updates[`favorites_${defaultId}`] = data.favorites;
+    }
+    
+    await chrome.storage.local.set(updates);
+    console.log('[Migration] Migrated legacy sp_config to sp_configs successfully.');
+  }
+}
+
 // 立即清理历史所有 DNR 规则，恢复正常的浏览器 SharePoint 网页访问！
 clearDNRRules().catch(err => console.error('Failed to clear rules on load:', err));
 
