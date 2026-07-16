@@ -21,16 +21,21 @@
   margin: 0;
   padding: 0;
 }
+html, body {
+  width: 480px;
+  height: 600px;
+  overflow: hidden !important;
+  margin: 0;
+  padding: 0;
+}
 
 body {
   font-family: var(--font-family);
   background-color: var(--bg-color);
   color: var(--text-primary);
-  width: 480px;
-  height: 600px;
-  overflow: hidden;
   position: relative;
 }
+
 
 /* 动态背景液态圆 (Fluid Blobs) */
 .glass-bg-blob {
