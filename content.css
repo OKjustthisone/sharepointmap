@@ -20,6 +20,7 @@
 
 .sp-map-modal-card {
   width: 520px;
+  height: 540px; /* 锁定高度，不随结果减少而缩小 */
   max-width: 90%;
   max-height: 80vh;
   background: rgba(11, 12, 19, 0.85);
@@ -80,11 +81,60 @@
 /* 过滤栏与筛选 Chip */
 .sp-map-filter-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 24px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 24px;
   background: rgba(255, 255, 255, 0.01);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sp-map-filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sp-map-filter-select-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sp-map-filter-select {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  padding: 5px 24px 5px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.sp-map-filter-select-wrapper::after {
+  content: "▼";
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+}
+
+.sp-map-filter-select:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.sp-map-filter-select option {
+  background-color: #12131a;
+  color: #ffffff;
 }
 
 .sp-map-filter-chip {

@@ -159,6 +159,19 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       });
     }
 
+    // 收集一级子目录列表
+    const l1Directories = [];
+    if (l1Cache && l1Cache.items) {
+      l1Cache.items.forEach(item => {
+        if (item.type === 'folder') {
+          l1Directories.push({
+            name: item.name,
+            relativeUrl: item.relativeUrl
+          });
+        }
+      });
+    }
+
     // 执行共享搜索
     const results = performFuzzySearchInCache(query, l1Cache, subtreeCache);
 
@@ -167,7 +180,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       chrome.tabs.sendMessage(tab.id, {
         action: 'show_search_results',
         query: query,
-        results: results
+        results: results,
+        l1Directories: l1Directories
       });
     } catch (err) {
       console.warn('Failed to send message to content script:', err);

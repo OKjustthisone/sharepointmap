@@ -2,12 +2,12 @@
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'show_search_results') {
-    showSearchResultsModal(request.query, request.results);
+    showSearchResultsModal(request.query, request.results, request.l1Directories);
     sendResponse({ success: true });
   }
 });
 
-function showSearchResultsModal(query, results) {
+function showSearchResultsModal(query, results, l1Directories) {
   // 1. 移除已存在的 Modal，防止重复堆叠
   const existing = document.getElementById('sp-map-search-overlay');
   if (existing) {
@@ -39,12 +39,65 @@ function showSearchResultsModal(query, results) {
 
   modal.appendChild(header);
 
-  // 4. 新增筛选功能：文件类型过滤栏 (跟主面板一致)
+  // 4. 双行过滤筛选栏 (与主面板保持 100% 一致)
   const filterBar = document.createElement('div');
   filterBar.className = 'sp-map-filter-bar';
 
+  let activeFilter = 'all'; // 文件夹或文件分类筛选
+  let activeL1Path = 'all'; // 1 级目录筛选
+
+  // ================= 第一行：全部按钮 + 1级目录下拉筛选 =================
+  const row1 = document.createElement('div');
+  row1.className = 'sp-map-filter-row sp-map-filter-row-1';
+
+  const allChip = document.createElement('button');
+  allChip.className = 'sp-map-filter-chip active';
+  allChip.innerText = '全部';
+  allChip.addEventListener('click', () => {
+    // 重置所有筛选条件 (跟主面板逻辑一致)
+    allChip.classList.add('active');
+    row2.querySelectorAll('.sp-map-filter-chip').forEach(c => c.classList.remove('active'));
+    l1Select.value = 'all';
+    activeFilter = 'all';
+    activeL1Path = 'all';
+    renderList();
+  });
+  row1.appendChild(allChip);
+
+  const selectWrapper = document.createElement('div');
+  selectWrapper.className = 'sp-map-filter-select-wrapper';
+
+  const l1Select = document.createElement('select');
+  l1Select.className = 'sp-map-filter-select';
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = 'all';
+  defaultOption.innerText = '所有 1 级目录 📂';
+  l1Select.appendChild(defaultOption);
+
+  if (l1Directories && Array.isArray(l1Directories)) {
+    l1Directories.forEach(dir => {
+      const option = document.createElement('option');
+      option.value = dir.relativeUrl;
+      option.innerText = dir.name;
+      l1Select.appendChild(option);
+    });
+  }
+
+  l1Select.addEventListener('change', (e) => {
+    activeL1Path = e.target.value;
+    renderList();
+  });
+
+  selectWrapper.appendChild(l1Select);
+  row1.appendChild(selectWrapper);
+  filterBar.appendChild(row1);
+
+  // ================= 第二行：文件夹/各类文件过滤按钮 =================
+  const row2 = document.createElement('div');
+  row2.className = 'sp-map-filter-row sp-map-filter-row-2';
+
   const filterTypes = [
-    { id: 'all', text: '全部' },
     { id: 'folder', text: '文件夹 📁' },
     { id: 'word', text: '文档 📄' },
     { id: 'excel', text: '表格 📊' },
@@ -53,22 +106,24 @@ function showSearchResultsModal(query, results) {
     { id: 'prism', text: 'Prism 📊' }
   ];
 
-  let activeFilter = 'all';
-
   filterTypes.forEach(ft => {
     const chip = document.createElement('button');
-    chip.className = 'sp-map-filter-chip' + (ft.id === activeFilter ? ' active' : '');
+    chip.className = 'sp-map-filter-chip';
     chip.innerText = ft.text;
     chip.dataset.filter = ft.id;
     chip.addEventListener('click', () => {
-      filterBar.querySelectorAll('.sp-map-filter-chip').forEach(c => c.classList.remove('active'));
+      // 切换高亮，反激活“全部”
+      allChip.classList.remove('active');
+      row2.querySelectorAll('.sp-map-filter-chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
+
       activeFilter = ft.id;
       renderList();
     });
-    filterBar.appendChild(chip);
+    row2.appendChild(chip);
   });
 
+  filterBar.appendChild(row2);
   modal.appendChild(filterBar);
 
   // Body 部分
@@ -103,8 +158,15 @@ function showSearchResultsModal(query, results) {
       return;
     }
 
-    // 过滤逻辑 (与主面板保持 100% 一致)
+    // 双重交集过滤逻辑 (与主面板保持 100% 一致)
     const filtered = results.filter(item => {
+      // 1. 应用 1 级目录过滤器
+      if (activeL1Path !== 'all') {
+        const isMatchL1 = item.relativeUrl === activeL1Path || item.relativeUrl.startsWith(activeL1Path + '/');
+        if (!isMatchL1) return false;
+      }
+
+      // 2. 应用文件/文件夹类型过滤器
       if (activeFilter === 'folder') {
         return item.type === 'folder';
       } else if (activeFilter !== 'all') {
