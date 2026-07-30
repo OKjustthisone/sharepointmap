@@ -39,99 +39,169 @@ function showSearchResultsModal(query, results) {
 
   modal.appendChild(header);
 
+  // 4. 新增筛选功能：文件类型过滤栏 (跟主面板一致)
+  const filterBar = document.createElement('div');
+  filterBar.className = 'sp-map-filter-bar';
+
+  const filterTypes = [
+    { id: 'all', text: '全部' },
+    { id: 'folder', text: '文件夹 📁' },
+    { id: 'word', text: '文档 📄' },
+    { id: 'excel', text: '表格 📊' },
+    { id: 'ppt', text: 'PPT 📉' },
+    { id: 'pdf', text: 'PDF 📕' },
+    { id: 'prism', text: 'Prism 📊' }
+  ];
+
+  let activeFilter = 'all';
+
+  filterTypes.forEach(ft => {
+    const chip = document.createElement('button');
+    chip.className = 'sp-map-filter-chip' + (ft.id === activeFilter ? ' active' : '');
+    chip.innerText = ft.text;
+    chip.dataset.filter = ft.id;
+    chip.addEventListener('click', () => {
+      filterBar.querySelectorAll('.sp-map-filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeFilter = ft.id;
+      renderList();
+    });
+    filterBar.appendChild(chip);
+  });
+
+  modal.appendChild(filterBar);
+
   // Body 部分
   const body = document.createElement('div');
   body.className = 'sp-map-modal-body';
 
   const info = document.createElement('div');
   info.className = 'sp-map-results-info';
-  info.innerText = `找到 ${results.length} 个匹配项`;
   body.appendChild(info);
-
-  if (results.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'sp-map-empty-placeholder';
-    empty.innerText = '🔍 未能找到匹配的文件夹或文件。确保插件已配置且数据已同步。';
-    body.appendChild(empty);
-  } else {
-    const list = document.createElement('div');
-    list.className = 'sp-map-results-list';
-
-    results.forEach(item => {
-      const itemEl = document.createElement('div');
-      itemEl.className = 'sp-map-result-item';
-
-      const left = document.createElement('div');
-      left.className = 'sp-map-item-left';
-
-      const icon = document.createElement('span');
-      icon.className = 'sp-map-item-icon';
-      icon.innerText = getItemIcon(item);
-      left.appendChild(icon);
-
-      const text = document.createElement('div');
-      text.className = 'sp-map-item-text';
-
-      const name = document.createElement('span');
-      name.className = 'sp-map-item-name';
-      name.innerText = item.name;
-      name.title = `点击在浏览器中打开: ${item.name}`;
-      
-      // 文件或文件夹点击，直接调用 window.open 打开
-      name.addEventListener('click', () => {
-        window.open(getOnlineViewUrl(item.webUrl, item.name), '_blank');
-      });
-
-      text.appendChild(name);
-
-      const path = document.createElement('span');
-      path.className = 'sp-map-item-path';
-      path.innerText = item.relativeUrl;
-      text.appendChild(path);
-
-      left.appendChild(text);
-      itemEl.appendChild(left);
-
-      // 右侧操作按钮
-      const actions = document.createElement('div');
-      actions.className = 'sp-map-item-actions';
-
-      // 1. 打开按钮
-      const openBtn = document.createElement('button');
-      openBtn.className = 'sp-map-action-btn';
-      openBtn.title = '在新标签页中打开';
-      openBtn.innerHTML = '🌐';
-      openBtn.addEventListener('click', () => {
-        window.open(getOnlineViewUrl(item.webUrl, item.name), '_blank');
-      });
-      actions.appendChild(openBtn);
-
-      // 2. 复制链接按钮
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'sp-map-action-btn';
-      copyBtn.title = '复制链接';
-      copyBtn.innerHTML = '🔗';
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(getOnlineViewUrl(item.webUrl, item.name))
-          .then(() => {
-            showToastMessage('📋 链接已成功复制到剪贴板！');
-          })
-          .catch(() => {
-            showToastMessage('❌ 复制失败，请重试');
-          });
-      });
-      actions.appendChild(copyBtn);
-
-      itemEl.appendChild(actions);
-      list.appendChild(itemEl);
-    });
-
-    body.appendChild(list);
-  }
 
   modal.appendChild(body);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+
+  // 初始化列表渲染
+  renderList();
+
+  // 列表条件渲染函数
+  function renderList() {
+    // 移除已有的列表或占位文本
+    const existingList = body.querySelector('.sp-map-results-list');
+    if (existingList) existingList.remove();
+    const existingEmpty = body.querySelector('.sp-map-empty-placeholder');
+    if (existingEmpty) existingEmpty.remove();
+
+    if (results.length === 0) {
+      info.innerText = '找到 0 个匹配项';
+      const empty = document.createElement('div');
+      empty.className = 'sp-map-empty-placeholder';
+      empty.innerText = '🔍 未能找到匹配的文件夹或文件。确保插件已配置且数据已同步。';
+      body.appendChild(empty);
+      return;
+    }
+
+    // 过滤逻辑 (与主面板保持 100% 一致)
+    const filtered = results.filter(item => {
+      if (activeFilter === 'folder') {
+        return item.type === 'folder';
+      } else if (activeFilter !== 'all') {
+        if (item.type !== 'file') return false;
+        const ext = item.name.split('.').pop().toLowerCase();
+        
+        if (activeFilter === 'word' && ext !== 'doc' && ext !== 'docx') return false;
+        if (activeFilter === 'excel' && ext !== 'xls' && ext !== 'xlsx') return false;
+        if (activeFilter === 'ppt' && ext !== 'ppt' && ext !== 'pptx') return false;
+        if (activeFilter === 'pdf' && ext !== 'pdf') return false;
+        if (activeFilter === 'prism' && ext !== 'prism' && ext !== 'pzfx') return false;
+      }
+      return true;
+    });
+
+    info.innerText = `找到 ${filtered.length} 个匹配项`;
+
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'sp-map-empty-placeholder';
+      empty.innerText = '🔍 该筛选条件下无匹配项。';
+      body.appendChild(empty);
+    } else {
+      const list = document.createElement('div');
+      list.className = 'sp-map-results-list';
+
+      filtered.forEach(item => {
+        const itemEl = document.createElement('div');
+        itemEl.className = 'sp-map-result-item';
+
+        const left = document.createElement('div');
+        left.className = 'sp-map-item-left';
+
+        const icon = document.createElement('span');
+        icon.className = 'sp-map-item-icon';
+        icon.innerText = getItemIcon(item);
+        left.appendChild(icon);
+
+        const text = document.createElement('div');
+        text.className = 'sp-map-item-text';
+
+        const name = document.createElement('span');
+        name.className = 'sp-map-item-name';
+        name.innerText = item.name;
+        name.title = `点击在浏览器中打开: ${item.name}`;
+        
+        name.addEventListener('click', () => {
+          window.open(getOnlineViewUrl(item.webUrl, item.name), '_blank');
+        });
+
+        text.appendChild(name);
+
+        const path = document.createElement('span');
+        path.className = 'sp-map-item-path';
+        path.innerText = item.relativeUrl;
+        text.appendChild(path);
+
+        left.appendChild(text);
+        itemEl.appendChild(left);
+
+        // 右侧操作按钮
+        const actions = document.createElement('div');
+        actions.className = 'sp-map-item-actions';
+
+        // 1. 打开按钮
+        const openBtn = document.createElement('button');
+        openBtn.className = 'sp-map-action-btn';
+        openBtn.title = '在新标签页中打开';
+        openBtn.innerHTML = '🌐';
+        openBtn.addEventListener('click', () => {
+          window.open(getOnlineViewUrl(item.webUrl, item.name), '_blank');
+        });
+        actions.appendChild(openBtn);
+
+        // 2. 复制链接按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'sp-map-action-btn';
+        copyBtn.title = '复制链接';
+        copyBtn.innerHTML = '🔗';
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(getOnlineViewUrl(item.webUrl, item.name))
+            .then(() => {
+              showToastMessage('📋 链接已成功复制到剪贴板！');
+            })
+            .catch(() => {
+              showToastMessage('❌ 复制失败，请重试');
+            });
+        });
+        actions.appendChild(copyBtn);
+
+        itemEl.appendChild(actions);
+        list.appendChild(itemEl);
+      });
+
+      body.appendChild(list);
+    }
+  }
 
   // 点击外部关闭
   overlay.addEventListener('click', (e) => {
