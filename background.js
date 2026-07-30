@@ -45,13 +45,20 @@ chrome.alarms.get('weekday_sync_alarm', (alarm) => {
   }
 });
 
-// 监听安装事件，设置定时任务
+// 监听安装事件，设置定时任务与右键菜单
 chrome.runtime.onInstalled.addListener(() => {
   console.log('SharePoint Quick Access extension installed.');
   // 设置 7 天定时任务 (7 * 24 * 60 分钟)
   chrome.alarms.create('sync_all_data', { periodInMinutes: 7 * 24 * 60 });
   // 设置工作日 10 点定时同步
   scheduleNextWeekdayAlarm();
+
+  // 创建右键菜单以支持选中文本在网页中搜索
+  chrome.contextMenus.create({
+    id: "search_sp_map",
+    title: "在 SharePoint Map 中搜索 '%s'",
+    contexts: ["selection"]
+  });
 });
 
 // 监听 Alarm 触发
@@ -95,5 +102,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((nodeCount) => sendResponse({ success: true, count: nodeCount }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;
+  }
+});
+
+// 监听右键菜单点击
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "search_sp_map" && info.selectionText) {
+    const query = info.selectionText;
+    
+    // 执行配置迁移（防万一）
+    await migrateConfigsIfNeeded();
+
+    const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config']);
+    const spConfigs = configData.sp_configs || [];
+    const currentConfigId = configData.current_config_id || '';
+    
+    let activeConfig = null;
+    if (currentConfigId) {
+      activeConfig = spConfigs.find(c => c.id === currentConfigId);
+    } else if (configData.sp_config) {
+      activeConfig = configData.sp_config;
+    }
+
+    if (!activeConfig || !activeConfig.siteUrl) {
+      // 提示未配置
+      try {
+        chrome.tabs.sendMessage(tab.id, {
+          action: 'show_search_results',
+          query: query,
+          results: []
+        });
+      } catch (err) {
+        console.warn('Failed to send message to tab:', err);
+      }
+      return;
+    }
+
+    // 获取该配置下的 L1 cache
+    const l1CacheKey = currentConfigId ? `l1_cache_${currentConfigId}` : 'l1_cache';
+    const l1Data = await chrome.storage.local.get(l1CacheKey);
+    const l1Cache = l1Data[l1CacheKey];
+
+    // 获取所有 subtree_cache
+    const allStorage = await chrome.storage.local.get(null);
+    const subtreeCache = {};
+    
+    if (l1Cache && l1Cache.items) {
+      const l1Ids = l1Cache.items.map(item => item.id);
+      Object.keys(allStorage).forEach(key => {
+        if (key.startsWith('subtree_cache_')) {
+          const l1Id = key.substring('subtree_cache_'.length);
+          if (l1Ids.includes(l1Id)) {
+            subtreeCache[l1Id] = allStorage[key];
+          }
+        }
+      });
+    }
+
+    // 执行共享搜索
+    const results = performFuzzySearchInCache(query, l1Cache, subtreeCache);
+
+    // 发送消息给当前的 Content Script 展示浮层
+    try {
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'show_search_results',
+        query: query,
+        results: results
+      });
+    } catch (err) {
+      console.warn('Failed to send message to content script:', err);
+    }
   }
 });

@@ -800,3 +800,78 @@ async function performAllSync() {
     console.error('Scheduled sync failed:', error);
   }
 }
+
+// 共享模糊搜索逻辑
+function performFuzzySearchInCache(query, l1Cache, subtreeCache) {
+  if (!query) return [];
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  // 模糊/宽容字符匹配辅助函数
+  function fuzzyMatch(target, searchStr) {
+    if (!target) return false;
+    const t = target.toLowerCase();
+    
+    // 1. 直截了当的直接包含匹配
+    if (t.includes(searchStr)) return true;
+
+    // 2. 忽略/替换特殊分隔符 (如 -, _, /, \, ., 空格) 为单个空格进行规范化匹配
+    const normalize = (str) => str.replace(/[-_/\s.]+/g, ' ').trim();
+    const normT = normalize(t);
+    const normQ = normalize(searchStr);
+    if (normT.includes(normQ)) return true;
+
+    // 3. 无序多词匹配
+    const qWords = normQ.split(' ').filter(w => w.length > 0);
+    if (qWords.length > 1) {
+      const allWordsMatched = qWords.every(word => normT.includes(word));
+      if (allWordsMatched) return true;
+    }
+
+    // 4. 紧凑无缝匹配
+    const strip = (str) => str.replace(/[-_/\s.]+/g, '');
+    const strippedT = strip(t);
+    const strippedQ = strip(searchStr);
+    if (strippedT.includes(strippedQ)) return true;
+
+    return false;
+  }
+
+  const results = [];
+
+  // 1. 收集 1 级目录
+  if (l1Cache && l1Cache.items) {
+    l1Cache.items.forEach(item => {
+      results.push(item);
+    });
+  }
+
+  // 2. 收集所有已缓存的子树节点
+  if (subtreeCache) {
+    for (const l1Id in subtreeCache) {
+      const cacheRoot = subtreeCache[l1Id];
+      if (cacheRoot && cacheRoot.tree) {
+        Object.keys(cacheRoot.tree).forEach(parentPath => {
+          const children = cacheRoot.tree[parentPath];
+          if (children) {
+            (children.folders || []).forEach(f => results.push(f));
+            (children.files || []).forEach(f => results.push(f));
+          }
+        });
+      }
+    }
+  }
+
+  // 去重
+  const uniqueMap = new Map();
+  results.forEach(item => {
+    uniqueMap.set(item.id || item.relativeUrl, item);
+  });
+
+  const searchPool = Array.from(uniqueMap.values());
+
+  // 模糊匹配
+  return searchPool.filter(item => {
+    return fuzzyMatch(item.name, q) || fuzzyMatch(item.relativeUrl, q);
+  });
+}
