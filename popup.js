@@ -40,6 +40,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   let syncStatus = {};
   let updateNotifications = [];
   let isNotificationsPanelOpen = false;
+
+  function svgIcon(name, className = '') {
+    const extraClass = className ? ` ${className}` : '';
+    return `<svg class="svg-icon${extraClass}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-${name}"></use></svg>`;
+  }
+
+  function updateDirectoryToggleIndicator(isExpanded) {
+    const arrowIcon = directoryToggleArrow.querySelector('.toggle-arrow-svg');
+    const arrowLabel = directoryToggleArrow.querySelector('.toggle-arrow-label');
+    if (arrowIcon) arrowIcon.classList.toggle('expanded', isExpanded);
+    if (arrowLabel) arrowLabel.innerText = isExpanded ? '收起目录' : '展开浏览';
+    directoryToggleArrow.style.color = isExpanded ? 'var(--primary-cyan)' : 'var(--text-muted)';
+  }
   
   // 树状图折叠展开状态映射 (folderId -> boolean)
   let expandedState = {};
@@ -55,7 +68,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   notificationsBtn.addEventListener('click', () => {
     const visibleNotifications = getVisibleUpdateNotifications();
     if (visibleNotifications.length === 0) {
-      showToast('🔔 暂无文件更新提醒');
+      showToast('暂无文件更新提醒', 'bell');
       return;
     }
 
@@ -74,7 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderUpdateNotifications();
     } catch (err) {
       console.error('Failed to mark update notifications as read:', err);
-      showToast('❌ 更新已读状态失败，请重试');
+      showToast('更新已读状态失败，请重试', 'alert');
     }
   });
   
@@ -84,30 +97,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     saveUIState(); // 保存状态
     if (isTreeExpanded) {
       directoryTree.classList.remove('collapsed');
-      directoryToggleArrow.innerText = '▼ 收起目录';
-      directoryToggleArrow.style.color = 'var(--primary-cyan)';
     } else {
       directoryTree.classList.add('collapsed');
-      directoryToggleArrow.innerText = '▶ 展开浏览';
-      directoryToggleArrow.style.color = 'var(--text-muted)';
     }
+    updateDirectoryToggleIndicator(isTreeExpanded);
   });
   
   // 手动同步 1 级目录事件
   syncL1Btn.addEventListener('click', (e) => {
     e.stopPropagation();
     syncL1Btn.classList.add('loading');
-    showToast('🔄 已在后台启动 1 级目录同步...');
+    showToast('已在后台启动 1 级目录同步...', 'sync');
     chrome.runtime.sendMessage({ action: 'sync_level1', configId: currentConfigId }, (response) => {
       syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
         console.error('Background sync level 1 failed:', chrome.runtime.lastError);
-        showToast('❌ 同步 1 级目录异常: ' + chrome.runtime.lastError.message);
+        showToast('同步 1 级目录异常: ' + chrome.runtime.lastError.message, 'alert');
       } else if (response && !response.success) {
         console.error('Background sync level 1 returned error:', response.error);
-        showToast(`❌ 同步 1 级目录失败: ${response.error}`);
+        showToast(`同步 1 级目录失败: ${response.error}`, 'alert');
       } else {
-        showToast('✨ 1 级目录同步完成！');
+        showToast('1 级目录同步完成！', 'check');
       }
     });
   });
@@ -234,10 +244,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     activeL1Path = uiState.activeL1Path || 'all';
 
     if (!spConfig || !spConfig.siteUrl || !spConfig.libraryName) {
-      showAlert('⚠️ 请先配置您的 SharePoint 站点与文档库。');
+      showAlert('请先配置您的 SharePoint 站点与文档库。', 'alert');
       directoryTree.innerHTML = `
         <div class="empty-list-placeholder">
-          配置未设置。请点击右上方 ⚙️ 按钮进入设置页面配置站点。
+          配置未设置。请点击右上方设置按钮进入设置页面配置站点。
         </div>
       `;
       tabsContainer.classList.add('hide');
@@ -249,13 +259,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 恢复全部目录的 UI 展开/收起状态
     if (isTreeExpanded) {
       directoryTree.classList.remove('collapsed');
-      directoryToggleArrow.innerText = '▼ 收起目录';
-      directoryToggleArrow.style.color = 'var(--primary-cyan)';
     } else {
       directoryTree.classList.add('collapsed');
-      directoryToggleArrow.innerText = '▶ 展开浏览';
-      directoryToggleArrow.style.color = 'var(--text-muted)';
     }
+    updateDirectoryToggleIndicator(isTreeExpanded);
     
     // 恢复过滤器 Chip 的 active 状态
     filterChips.forEach(chip => {
@@ -276,7 +283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       `;
       try {
         await syncLevel1(currentConfigId);
-        showToast('✨ 1 级目录同步成功！');
+        showToast('1 级目录同步成功！', 'check');
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();
@@ -286,7 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error(err);
         directoryTree.innerHTML = `
           <div class="empty-list-placeholder" style="color: var(--danger-red);">
-            ⚠️ 同步失败，请点击右上角 🔄 手动重试。<br>
+            同步失败，请点击右上角同步按钮手动重试。<br>
             错误原因: ${err.message || err}
           </div>
         `;
@@ -295,7 +302,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 检查是否已过期 (7 天)
       const isExpired = Date.now() - l1Cache.last_updated > 7 * 24 * 60 * 60 * 1000;
       if (isExpired) {
-        showToast('🔄 正在自动更新已过期的缓存...');
+        showToast('正在自动更新已过期的缓存...', 'sync');
         syncLevel1(currentConfigId)
           .then(async () => {
             console.log('Auto refresh of Level 1 completed.');
@@ -465,7 +472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const icon = document.createElement('div');
       icon.className = 'update-notification-icon';
-      icon.innerText = '📊';
+      icon.innerHTML = svgIcon('file-presentation', 'update-notification-svg');
 
       const body = document.createElement('div');
       body.className = 'update-notification-body';
@@ -503,7 +510,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const path = document.createElement('div');
       path.className = 'update-notification-path';
       path.title = notification.relativeUrl || '';
-      path.innerText = `📁 ${getNotificationParentPath(notification.relativeUrl)}`;
+      path.innerHTML = `${svgIcon('folder', 'path-svg')}<span>${getNotificationParentPath(notification.relativeUrl)}</span>`;
       body.appendChild(path);
 
       if (spConfigs.length > 1 && notification.configName) {
@@ -518,7 +525,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const openLink = document.createElement('a');
       openLink.className = 'update-notification-open';
-      openLink.innerText = '打开文件 ↗';
+      openLink.innerHTML = `${svgIcon('external-link', 'inline-action-svg')}<span>打开文件</span>`;
       openLink.href = getOnlineViewUrl(notification.webUrl);
       openLink.target = '_blank';
       openLink.rel = 'noopener noreferrer';
@@ -536,7 +543,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         readBtn.className = 'update-notification-read-btn';
         readBtn.type = 'button';
         readBtn.title = '标记为已读';
-        readBtn.innerText = '✓';
+        readBtn.setAttribute('aria-label', '标记为已读');
+        readBtn.innerHTML = svgIcon('check', 'read-svg');
         readBtn.addEventListener('click', async () => {
           await markFileUpdateNotificationsRead([notification.id]);
           await loadUpdateNotificationsFromStorage();
@@ -610,7 +618,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     favoritesList.innerHTML = '';
     if (favorites.length === 0) {
       favoritesList.className = 'empty-list-placeholder';
-      favoritesList.innerText = '暂无收藏。点击目录树中文件夹或文件旁的 ⭐ 即可加入收藏。';
+      favoritesList.innerText = '暂无收藏。点击目录树中文件夹或文件旁的收藏按钮即可加入收藏。';
       return;
     }
 
@@ -659,7 +667,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const hasCache = getCachedSubtree(item.id, item.relativeUrl);
 
     // 折叠展开箭头状态
-    let toggleIcon = '▶';
     let toggleClass = 'node-toggle';
     if (!isFolder) {
       toggleClass += ' empty';
@@ -671,32 +678,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     nodeEl.className = 'tree-node';
     nodeEl.style.paddingLeft = `${(depth - 1) * 16 + 10}px`;
 
-    const icon = isFolder ? (isExpanded ? '📂' : '📁') : '📄';
+    const iconName = isFolder ? (isExpanded ? 'folder-open' : 'folder') : 'file';
+    const icon = svgIcon(iconName, 'node-svg-icon');
 
     let syncBtnHtml = '';
     const isNodeSyncing = syncStatus[item.id] && syncStatus[item.id].status === 'syncing';
     if (isFolder && item.level === 1 && isFav) {
       const loadingClass = isNodeSyncing ? 'loading' : '';
-      const syncTitle = isNodeSyncing ? '正在同步子树...' : '同步该目录下的子树 🔄';
-      syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="${syncTitle}">🔄</button>`;
+      const syncTitle = isNodeSyncing ? '正在同步子树...' : '同步该目录下的子树';
+      syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="${syncTitle}" aria-label="${syncTitle}">${svgIcon('sync', 'action-svg')}</button>`;
     }
 
     let favBtnHtml = '';
     if (!isFavList) {
       const favTitle = isFav ? '取消快捷收藏' : '加入快捷收藏';
-      favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}" title="${favTitle}">${isFav ? '⭐' : '☆'}</button>`;
+      favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}" title="${favTitle}" aria-label="${favTitle}">${svgIcon(isFav ? 'star-filled' : 'star', 'fav-svg')}</button>`;
     }
 
     nodeEl.innerHTML = `
       <div class="node-left">
-        <span class="${toggleClass}">${toggleIcon}</span>
-        <span class="node-icon">${icon}</span>
+        <span class="${toggleClass}">${svgIcon('chevron-right', 'node-toggle-svg')}</span>
+        <span class="node-icon ${isFolder ? 'folder-icon' : 'file-icon'}">${icon}</span>
         <span class="node-name ${isFolder ? 'folder-node' : ''}" title="${item.relativeUrl}">${item.name}</span>
       </div>
       <div class="node-right ${isFav ? 'is-fav' : ''}">
         ${syncBtnHtml}
-        <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页 🌐">🌐</button>
-        <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接 🔗">🔗</button>
+        <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页" aria-label="在浏览器中打开网页">${svgIcon('external-link', 'action-svg')}</button>
+        <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接" aria-label="复制 SharePoint 链接">${svgIcon('clipboard', 'action-svg')}</button>
         ${favBtnHtml}
       </div>
     `;
@@ -737,7 +745,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           e.stopPropagation();
           syncBtn.classList.add('loading');
           
-          showToast(`🚀 已在后台启动目录 [${item.name}] 的同步，可以关闭此窗口...`);
+          showToast(`已在后台启动目录 [${item.name}] 的同步，可以关闭此窗口...`, 'sync');
           
           chrome.runtime.sendMessage({
             action: 'sync_subtree',
@@ -747,12 +755,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncBtn.classList.remove('loading');
             if (chrome.runtime.lastError) {
               console.error('Background sync subtree failed:', chrome.runtime.lastError);
-              showToast('❌ 同步子目录异常: ' + chrome.runtime.lastError.message);
+              showToast('同步子目录异常: ' + chrome.runtime.lastError.message, 'alert');
             } else if (response && !response.success) {
               console.error('Background sync subtree returned error:', response.error);
-              showToast(`❌ 同步子目录失败: ${response.error}`);
+              showToast(`同步子目录失败: ${response.error}`, 'alert');
             } else {
-              showToast(`✨ 目录 [${item.name}] 同步完成！`);
+              showToast(`目录 [${item.name}] 同步完成！`, 'check');
             }
           });
         });
@@ -772,14 +780,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const folderIcon = nodeEl.querySelector('.node-icon');
         if (nextExpanded) {
           arrow.classList.add('expanded');
-          folderIcon.innerText = '📂';
+          folderIcon.innerHTML = svgIcon('folder-open', 'node-svg-icon');
           childrenContainer.style.display = 'block';
           
           // 加载子项
           renderSubtreeItems(item, childrenContainer, depth + 1);
         } else {
           arrow.classList.remove('expanded');
-          folderIcon.innerText = '📁';
+          folderIcon.innerHTML = svgIcon('folder', 'node-svg-icon');
           childrenContainer.style.display = 'none';
         }
       };
@@ -843,7 +851,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const summaryEl = document.createElement('div');
         summaryEl.className = 'tree-node-summary';
         summaryEl.style.paddingLeft = `${depth * 16 + 10}px`;
-        summaryEl.innerHTML = `📊 该目录下共含有 <strong>${totalFolders}</strong> 个文件夹，<strong>${totalFiles}</strong> 个文件`;
+        summaryEl.innerHTML = `${svgIcon('grid', 'summary-svg')}<span>该目录下共含有 <strong>${totalFolders}</strong> 个文件夹，<strong>${totalFiles}</strong> 个文件</span>`;
         container.appendChild(summaryEl);
       }
 
@@ -860,22 +868,22 @@ document.addEventListener('DOMContentLoaded', async () => {
           tipEl.innerHTML = `
             <div class="sync-progress-wrapper" style="display: flex; align-items: center; gap: 8px;">
               <div class="spinner mini"></div>
-              <span>⏳ 正在后台同步中...</span>
+              <span>正在后台同步中...</span>
             </div>
           `;
         } else if (isFav) {
           tipEl.innerHTML = `
-            <span>该目录缓存未同步。请点击 <button class="inline-sync-btn">🔄 重新同步子目录</button> 尝试拉取。</span>
+            <span>该目录缓存未同步。请点击 <button class="inline-sync-btn">${svgIcon('sync', 'inline-action-svg')}<span>重新同步子目录</span></button> 尝试拉取。</span>
           `;
           tipEl.querySelector('.inline-sync-btn').addEventListener('click', () => {
             const btn = tipEl.querySelector('.inline-sync-btn');
             btn.disabled = true;
-            btn.innerText = '⏳ 正在同步...';
+            btn.innerHTML = `${svgIcon('sync', 'inline-action-svg')}<span>正在同步...</span>`;
             triggerSubtreeSyncInBackground(parentItem.id, parentItem.relativeUrl);
           });
         } else {
           tipEl.innerHTML = `
-            <span>该目录未在本地缓存中。请先 <button class="inline-fav-btn">★ 收藏该文件夹</button> 以在后台自动同步其子目录。</span>
+            <span>该目录未在本地缓存中。请先 <button class="inline-fav-btn">${svgIcon('star-filled', 'inline-action-svg')}<span>收藏该文件夹</span></button> 以在后台自动同步其子目录。</span>
           `;
           tipEl.querySelector('.inline-fav-btn').addEventListener('click', () => {
             toggleFavorite(parentItem);
@@ -935,7 +943,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!selectEl) return;
 
     // 保留第一个“所有 1 级目录”选项，清除其他选项
-    selectEl.innerHTML = '<option value="all">所有 1 级目录 📂</option>';
+    selectEl.innerHTML = '<option value="all">所有 1 级目录</option>';
 
     if (favorites && Array.isArray(favorites)) {
       // 筛选出已收藏的 1 级目录文件夹，并按名称自然排序
@@ -945,7 +953,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       favoritedL1Folders.forEach(item => {
         const option = document.createElement('option');
         option.value = item.relativeUrl;
-        option.textContent = `📁 ${item.name}`;
+        option.textContent = item.name;
         selectEl.appendChild(option);
       });
     }
@@ -1015,12 +1023,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     progressEl.classList.remove('hide');
 
-    let progressText = `⏳ 更新中: 📂${totalFolders} 📄${totalNodes}`;
+    const progressContent = document.createElement('span');
+    progressContent.className = 'fav-sync-progress-content';
+    progressContent.innerHTML = `${svgIcon('sync', 'progress-svg')}<span>更新中:</span>${svgIcon('folder', 'progress-inline-svg')}<span>${totalFolders}</span>${svgIcon('file', 'progress-inline-svg')}<span>${totalNodes}</span>`;
     if (currentPath) {
-      progressText += ` (${currentPath})`;
+      progressContent.insertAdjacentHTML('beforeend', `<span>(${currentPath})</span>`);
     }
     
-    progressEl.innerHTML = progressText;
+    progressEl.innerHTML = '';
+    progressEl.appendChild(progressContent);
     progressEl.title = `正在更新：已扫描 ${totalFolders} 个文件夹，发现 ${totalNodes} 个文件${currentPath ? `。当前: ${currentPath}` : ''}`;
   }
 
@@ -1076,7 +1087,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         itemEl.className = 'result-item';
 
         const isFolder = item.type === 'folder';
-        const icon = isFolder ? '📁' : '📄';
+        const iconName = isFolder ? 'folder' : 'file';
+        const icon = svgIcon(iconName, 'node-svg-icon');
 
         // 提取父级目录路径展示
         let parentPath = '';
@@ -1092,15 +1104,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         itemEl.innerHTML = `
           <div class="result-info">
             <div class="result-title-row">
-              <span class="node-icon">${icon}</span>
+              <span class="node-icon ${isFolder ? 'folder-icon' : 'file-icon'}">${icon}</span>
               <span class="node-name" style="font-weight: 500;">${item.name}</span>
             </div>
             <div class="result-path" title="${item.relativeUrl}">路径: ${parentPath}</div>
           </div>
           <div class="node-right ${isFav ? 'is-fav' : ''}">
-            <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页 🌐">🌐</button>
-            <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接 🔗">🔗</button>
-            <button class="fav-btn ${isFav ? 'active' : ''}" title="${isFav ? '取消快捷收藏' : '加入快捷收藏'}">${isFav ? '⭐' : '☆'}</button>
+            <button class="action-btn open-btn" data-url="${item.webUrl}" title="在浏览器中打开网页" aria-label="在浏览器中打开网页">${svgIcon('external-link', 'action-svg')}</button>
+            <button class="action-btn copy-btn" data-url="${item.webUrl}" title="复制 SharePoint 链接" aria-label="复制 SharePoint 链接">${svgIcon('clipboard', 'action-svg')}</button>
+            <button class="fav-btn ${isFav ? 'active' : ''}" title="${isFav ? '取消快捷收藏' : '加入快捷收藏'}" aria-label="${isFav ? '取消快捷收藏' : '加入快捷收藏'}">${svgIcon(isFav ? 'star-filled' : 'star', 'fav-svg')}</button>
           </div>
         `;
 
@@ -1118,7 +1130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 触发后台同步子目录（通过 Background 避免弹窗关闭终止任务）
   function triggerSubtreeSyncInBackground(folderId, relativeUrl) {
-    showToast('🚀 已在后台启动子目录同步，可以关闭此窗口...');
+    showToast('已在后台启动子目录同步，可以关闭此窗口...', 'sync');
     chrome.runtime.sendMessage({
       action: 'sync_subtree',
       folderId: folderId,
@@ -1126,12 +1138,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, (response) => {
       if (chrome.runtime.lastError) {
         console.error('Background sync trigger error:', chrome.runtime.lastError);
-        showToast('❌ 触发后台同步失败');
+        showToast('触发后台同步失败', 'alert');
       } else if (response && !response.success) {
         console.error('Background sync failed:', response.error);
-        showToast(`❌ 同步失败: ${response.error}`);
+        showToast(`同步失败: ${response.error}`, 'alert');
       } else {
-        showToast('✨ 子树目录同步完成！已完全缓存。');
+        showToast('子树目录同步完成！已完全缓存。', 'check');
       }
     });
   }
@@ -1194,11 +1206,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const finalUrl = getOnlineViewUrl(url);
     navigator.clipboard.writeText(finalUrl)
       .then(() => {
-        showToast('📋 链接已成功复制到剪贴板！');
+        showToast('链接已成功复制到剪贴板！', 'clipboard');
       })
       .catch(err => {
         console.error('Failed to copy text: ', err);
-        showToast('❌ 复制失败，请重试');
+        showToast('复制失败，请重试', 'alert');
       });
   }
 
@@ -1218,7 +1230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         relativeUrl: item.relativeUrl,
         webUrl: item.webUrl
       });
-      showToast('⭐ 已添加至快捷收藏');
+      showToast('已添加至快捷收藏', 'star-filled');
 
       // 核心要求：如果是 1 级文件夹，收藏后立即触发对子树进行全量递归同步
       if (item.type === 'folder' && item.level === 1) {
@@ -1227,7 +1239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       // 取消收藏
       favorites.splice(index, 1);
-      showToast('☆ 已取消收藏');
+      showToast('已取消收藏', 'star');
       
       // 如果被删除的是 1 级目录，同时从 subtreeCache 中移除以释放存储空间
       if (item.type === 'folder' && item.level === 1) {
@@ -1251,10 +1263,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ==================== 提示条与 Toast 通用组件 ====================
 
-  function showToast(message) {
+  function showToast(message, iconName = '') {
     const toast = document.createElement('div');
     toast.className = 'toast';
-    toast.innerHTML = `<span>${message}</span>`;
+
+    if (iconName) {
+      const icon = document.createElement('span');
+      icon.className = `toast-icon toast-icon-${iconName}`;
+      icon.innerHTML = svgIcon(iconName, 'toast-svg');
+      toast.appendChild(icon);
+    }
+
+    const text = document.createElement('span');
+    text.innerText = message;
+    toast.appendChild(text);
     
     toastContainer.appendChild(toast);
     
@@ -1264,8 +1286,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 2500);
   }
 
-  function showAlert(msg) {
-    alertText.innerText = msg;
+  function showAlert(msg, iconName = '') {
+    alertText.innerHTML = '';
+    if (iconName) {
+      const icon = document.createElement('span');
+      icon.className = `alert-icon alert-icon-${iconName}`;
+      icon.innerHTML = svgIcon(iconName, 'alert-svg');
+      alertText.appendChild(icon);
+    }
+    const text = document.createElement('span');
+    text.innerText = msg;
+    alertText.appendChild(text);
     alertBanner.classList.remove('hide');
   }
 

@@ -10,19 +10,113 @@
   <div class="glass-bg-blob blob-1"></div>
   <div class="glass-bg-blob blob-2"></div>
 
+  <!-- 面板统一线性 SVG 图标库，所有图标均为本地矢量资源 -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="icon-bell" viewBox="0 0 24 24">
+      <path d="M18 9.5C18 6.46 15.76 4 12 4S6 6.46 6 9.5c0 7-3 7-3 8.5h18c0-1.5-3-1.5-3-8.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="M10 21h4M12 2.5V4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+      <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.35"/>
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24">
+      <circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/>
+      <path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24">
+      <path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24">
+      <rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M7.5 3.5v4M16.5 3.5v4M3.5 10h17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24">
+      <path d="M3.75 6.5A1.75 1.75 0 0 1 5.5 4.75h4.2l1.65 2h7.15a1.75 1.75 0 0 1 1.75 1.75v9A1.75 1.75 0 0 1 18.5 19.25h-13a1.75 1.75 0 0 1-1.75-1.75V6.5Z" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M3.75 9h16.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-folder-open" viewBox="0 0 24 24">
+      <path d="M3.75 7.5A1.75 1.75 0 0 1 5.5 5.75h4.2l1.65 2h7.15a1.75 1.75 0 0 1 1.75 1.75v1.25" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M3.25 10.25h17.5l-2.1 7.25a2 2 0 0 1-1.92 1.45H5.27a2 2 0 0 1-1.92-1.45l-2.1-7.25Z" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-file" viewBox="0 0 24 24">
+      <path d="M6.5 3.75h7.15L18 8.1v12.15H6.5V3.75Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M13.5 3.75V8.1H18M9.5 12h5M9.5 15.5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-file-spreadsheet" viewBox="0 0 24 24">
+      <path d="M6.5 3.75h7.15L18 8.1v12.15H6.5V3.75Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M13.5 3.75V8.1H18M9 11.5h6M9 15h6M12 11.5v6M9 18.5h6" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-file-presentation" viewBox="0 0 24 24">
+      <path d="M6.5 3.75h7.15L18 8.1v12.15H6.5V3.75Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M13.5 3.75V8.1H18M9 12h6v4H9zM12 16v2M10.5 18h3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-file-pdf" viewBox="0 0 24 24">
+      <path d="M6.5 3.75h7.15L18 8.1v12.15H6.5V3.75Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M13.5 3.75V8.1H18M9 13h6M9 16h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-beaker" viewBox="0 0 24 24">
+      <path d="M9 3.5h6M10 3.5v5.1L5.5 17a2.2 2.2 0 0 0 1.9 3.3h9.2a2.2 2.2 0 0 0 1.9-3.3L14 8.6V3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7.5 15h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M9.5 17h.01M12 16h.01M14.5 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24">
+      <rect x="4" y="4" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
+      <rect x="14" y="4" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
+      <rect x="4" y="14" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
+      <rect x="14" y="14" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
+    </symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+      <path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-sync" viewBox="0 0 24 24">
+      <path d="M20 11a8.1 8.1 0 0 0-14.7-3L4 10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4 5v5h5M4 13a8.1 8.1 0 0 0 14.7 3L20 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M20 19v-5h-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-external-link" viewBox="0 0 24 24">
+      <path d="M13.5 4H20v6.5M20 4l-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M18 13.5v4.25A2.25 2.25 0 0 1 15.75 20H6a2.25 2.25 0 0 1-2.25-2.25V8A2.25 2.25 0 0 1 6 5.75h4.25" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-clipboard" viewBox="0 0 24 24">
+      <rect x="5" y="5.5" width="14" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M9 5.5V4.75A1.75 1.75 0 0 1 10.75 3h2.5A1.75 1.75 0 0 1 15 4.75v.75M9 10h6M9 13.5h6M9 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-star" viewBox="0 0 24 24">
+      <path d="m12 3.5 2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17.03l-5.3 2.78 1.01-5.9-4.29-4.18 5.93-.86L12 3.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-star-filled" viewBox="0 0 24 24">
+      <path d="m12 3.5 2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17.03l-5.3 2.78 1.01-5.9-4.29-4.18 5.93-.86L12 3.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="m5 12.5 4.2 4.2L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24">
+      <path d="m12 3.5 9 16H3l9-16Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M12 9v4M12 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+  </svg>
+
   <div class="app-container">
     <!-- 头部栏 -->
     <header class="app-header">
       <div class="brand">
-        <span class="logo-icon">📂</span>
+        <span class="logo-icon" aria-hidden="true">
+          <svg class="svg-icon logo-svg" viewBox="0 0 24 24" focusable="false"><use href="#icon-folder-open"></use></svg>
+        </span>
         <h2 class="app-title gradient-text">SharePoint Map</h2>
       </div>
       <div class="actions">
         <button id="notificationsBtn" title="文件更新提醒" aria-label="文件更新提醒" aria-expanded="false" class="icon-btn notification-bell">
-          <span class="notification-bell-icon" aria-hidden="true">🔔</span>
+          <span class="notification-bell-icon" aria-hidden="true">
+            <svg class="notification-bell-svg svg-icon" viewBox="0 0 24 24" focusable="false"><use href="#icon-bell"></use></svg>
+          </span>
           <span id="notificationBellDot" class="notification-bell-dot hide" aria-hidden="true"></span>
         </button>
-        <button id="settingsBtn" title="配置选项" class="icon-btn">⚙️</button>
+        <button id="settingsBtn" title="配置选项" aria-label="配置选项" class="icon-btn">
+          <svg class="svg-icon settings-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-settings"></use></svg>
+        </button>
       </div>
     </header>
     
@@ -40,9 +134,9 @@
     <!-- 搜索栏 -->
     <div class="search-box-container">
       <div class="search-wrapper">
-        <span class="search-icon">🔍</span>
+        <span class="search-icon" aria-hidden="true"><svg class="svg-icon search-svg" viewBox="0 0 24 24" focusable="false"><use href="#icon-search"></use></svg></span>
         <input type="text" id="searchInput" placeholder="搜索文件名或路径...">
-        <button id="clearSearchBtn" class="clear-btn hide">✕</button>
+        <button id="clearSearchBtn" class="clear-btn hide" title="清除搜索" aria-label="清除搜索"><svg class="svg-icon clear-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
       </div>
     </div>
 
@@ -52,7 +146,7 @@
       <section id="updateNotificationsSection" class="content-section update-notifications-section hide">
         <div class="update-notifications-header">
           <div>
-            <h3 class="section-title update-notifications-title">📅 会议通知</h3>
+            <h3 class="section-title update-notifications-title"><svg class="svg-icon section-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-calendar"></use></svg><span>会议通知</span></h3>
             <p class="update-notifications-subtitle">收藏目录中的 PPT 文件更新</p>
           </div>
           <div class="update-notifications-header-actions">
@@ -66,7 +160,7 @@
       <!-- 搜索结果视图 (默认隐藏) -->
       <section id="searchResultsSection" class="content-section hide">
         <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <h3 class="section-title" style="margin-bottom: 0;">🔍 搜索结果</h3>
+          <h3 class="section-title section-title-with-icon" style="margin-bottom: 0;"><svg class="svg-icon section-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg><span>搜索结果</span></h3>
           <span id="searchResultCount" style="font-size: 11px; color: var(--text-muted);">共 0 条</span>
         </div>
         
@@ -76,17 +170,18 @@
             <button class="filter-chip active" data-filter="all">全部</button>
             <div class="filter-select-wrapper">
               <select id="l1FilterSelect" class="filter-select">
-                <option value="all">所有 1 级目录 📂</option>
+                <option value="all">所有 1 级目录</option>
               </select>
+              <svg class="svg-icon filter-select-arrow" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-chevron-right"></use></svg>
             </div>
           </div>
           <div class="search-filter-bar">
-            <button class="filter-chip" data-filter="folder">文件夹 📁</button>
-            <button class="filter-chip" data-filter="word">文档 📄</button>
-            <button class="filter-chip" data-filter="excel">表格 📊</button>
-            <button class="filter-chip" data-filter="ppt">PPT 📉</button>
-            <button class="filter-chip" data-filter="pdf">PDF 📕</button>
-            <button class="filter-chip" data-filter="prism">Prism 📊</button>
+            <button class="filter-chip" data-filter="folder"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-folder"></use></svg><span>文件夹</span></button>
+            <button class="filter-chip" data-filter="word"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-file"></use></svg><span>文档</span></button>
+            <button class="filter-chip" data-filter="excel"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-file-spreadsheet"></use></svg><span>表格</span></button>
+            <button class="filter-chip" data-filter="ppt"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-file-presentation"></use></svg><span>PPT</span></button>
+            <button class="filter-chip" data-filter="pdf"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-file-pdf"></use></svg><span>PDF</span></button>
+            <button class="filter-chip" data-filter="prism"><svg class="svg-icon filter-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-beaker"></use></svg><span>Prism</span></button>
           </div>
         </div>
 
@@ -100,11 +195,11 @@
         <!-- 收藏夹部分 -->
         <section id="favoritesSection" class="content-section">
           <div class="favorites-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <h3 class="section-title" style="margin-bottom: 0;">⭐ 快捷收藏 <span id="favCount"></span></h3>
+            <h3 class="section-title section-title-with-icon" style="margin-bottom: 0;"><svg class="svg-icon section-icon favorite-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-star-filled"></use></svg><span>快捷收藏</span><span id="favCount"></span></h3>
             <span id="favSyncProgress" class="fav-sync-progress hide"></span>
           </div>
           <div id="favoritesList" class="empty-list-placeholder">
-            暂无收藏。点击下方文件夹旁的 ⭐ 即可加入收藏夹。
+            暂无收藏。点击下方文件夹或文件旁的收藏按钮即可加入收藏夹。
           </div>
         </section>
 
@@ -112,10 +207,10 @@
         <section id="directorySection" class="content-section">
           <div class="directory-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <h3 class="section-title toggle-title" id="directoryToggleBtn" style="margin-bottom: 0; flex-grow: 1; display: flex; align-items: center; justify-content: space-between;">
-              <span>📁 全部目录 (仅用于添加收藏)</span>
-              <span id="directoryToggleArrow" class="toggle-arrow" style="margin-right: 8px;">▶ 展开浏览</span>
+              <span class="directory-title-label"><svg class="svg-icon section-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-folder-open"></use></svg><span>全部目录 (仅用于添加收藏)</span></span>
+              <span id="directoryToggleArrow" class="toggle-arrow" style="margin-right: 8px;"><svg class="svg-icon toggle-arrow-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-chevron-right"></use></svg><span class="toggle-arrow-label">展开浏览</span></span>
             </h3>
-            <button id="syncL1Btn" class="l1-sync-btn" title="只同步所有 1 级目录">同步 1 级 <span class="sync-icon">🔄</span></button>
+            <button id="syncL1Btn" class="l1-sync-btn" title="只同步所有 1 级目录"><span>同步 1 级</span><svg class="svg-icon sync-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-sync"></use></svg></button>
           </div>
           <div id="directoryTree" class="directory-tree-container collapsed">
             <div class="loading-spinner-wrapper">
