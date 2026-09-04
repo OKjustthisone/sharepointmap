@@ -21,6 +21,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const l1FilterSelect = document.getElementById('l1FilterSelect');
   const filterChips = document.querySelectorAll('.filter-chip');
   const tabsContainer = document.getElementById('tabsContainer');
+  const notificationsBtn = document.getElementById('notificationsBtn');
+  const notificationBellDot = document.getElementById('notificationBellDot');
   const updateNotificationsSection = document.getElementById('updateNotificationsSection');
   const updateNotificationsList = document.getElementById('updateNotificationsList');
   const updateNotificationCount = document.getElementById('updateNotificationCount');
@@ -37,6 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let subtreeCache = {};
   let syncStatus = {};
   let updateNotifications = [];
+  let isNotificationsPanelOpen = false;
   
   // 树状图折叠展开状态映射 (folderId -> boolean)
   let expandedState = {};
@@ -48,6 +51,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
+
+  notificationsBtn.addEventListener('click', () => {
+    const visibleNotifications = getVisibleUpdateNotifications();
+    if (visibleNotifications.length === 0) {
+      showToast('🔔 暂无文件更新提醒');
+      return;
+    }
+
+    isNotificationsPanelOpen = !isNotificationsPanelOpen;
+    renderUpdateNotifications();
+  });
 
   markNotificationsReadBtn.addEventListener('click', async () => {
     const visibleNotifications = getVisibleUpdateNotifications();
@@ -336,6 +350,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 切换配置时清除界面部分状态
         expandedState = {};
         isTreeExpanded = false;
+        isNotificationsPanelOpen = false;
         
         // 重新初始化并加载新站点的数据
         await initApp();
@@ -404,13 +419,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     return parts.length > 1 ? parts.slice(0, -1).join('/') : '文档库根目录';
   }
 
+  function updateNotificationBell(visibleNotifications) {
+    const unreadCount = visibleNotifications.filter(item => !item.read).length;
+    const hasUnread = unreadCount > 0;
+
+    notificationBellDot.classList.toggle('hide', !hasUnread);
+    notificationBellDot.innerText = hasUnread
+      ? (unreadCount > 99 ? '99+' : String(unreadCount))
+      : '';
+    notificationsBtn.classList.toggle('has-unread', hasUnread);
+    notificationsBtn.title = hasUnread ? `${unreadCount} 条未读文件更新` : '查看文件更新提醒';
+    notificationsBtn.setAttribute('aria-label', notificationsBtn.title);
+    notificationsBtn.setAttribute('aria-expanded', String(isNotificationsPanelOpen));
+  }
+
   function renderUpdateNotifications() {
     if (!updateNotificationsSection || !updateNotificationsList) return;
 
     const visibleNotifications = getVisibleUpdateNotifications();
+    updateNotificationBell(visibleNotifications);
     updateNotificationsList.innerHTML = '';
 
     if (visibleNotifications.length === 0) {
+      updateNotificationCount.innerText = '';
+      markNotificationsReadBtn.disabled = true;
+      updateNotificationsSection.classList.add('hide');
+      return;
+    }
+
+    if (!isNotificationsPanelOpen) {
       updateNotificationsSection.classList.add('hide');
       return;
     }
