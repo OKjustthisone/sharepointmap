@@ -151,6 +151,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       `l1_cache_${configId}`,
       `favorites_${configId}`
     ]);
+    await removeFileUpdateNotificationsForConfig(configId);
 
     // 如果删除的是当前激活的，切换到另一个
     if (currentConfigId === configId) {

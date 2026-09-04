@@ -21,6 +21,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const l1FilterSelect = document.getElementById('l1FilterSelect');
   const filterChips = document.querySelectorAll('.filter-chip');
   const tabsContainer = document.getElementById('tabsContainer');
+  const updateNotificationsSection = document.getElementById('updateNotificationsSection');
+  const updateNotificationsList = document.getElementById('updateNotificationsList');
+  const updateNotificationCount = document.getElementById('updateNotificationCount');
+  const markNotificationsReadBtn = document.getElementById('markNotificationsReadBtn');
 
   // 全局数据状态缓存与过滤器状态
   let activeFilter = 'all';
@@ -32,6 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let l1Cache = null;
   let subtreeCache = {};
   let syncStatus = {};
+  let updateNotifications = [];
   
   // 树状图折叠展开状态映射 (folderId -> boolean)
   let expandedState = {};
@@ -43,6 +48,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
+
+  markNotificationsReadBtn.addEventListener('click', async () => {
+    const visibleNotifications = getVisibleUpdateNotifications();
+    const unreadIds = visibleNotifications.filter(item => !item.read).map(item => item.id);
+    if (unreadIds.length === 0) return;
+
+    try {
+      await markFileUpdateNotificationsRead(unreadIds);
+      await loadUpdateNotificationsFromStorage();
+      renderUpdateNotifications();
+    } catch (err) {
+      console.error('Failed to mark update notifications as read:', err);
+      showToast('❌ 更新已读状态失败，请重试');
+    }
+  });
   
   // 3. 绑定“全部目录”展开/折叠事件
   directoryToggleBtn.addEventListener('click', () => {
@@ -186,9 +206,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
+    await loadUpdateNotificationsFromStorage();
     
     // 渲染切换 Tab 栏
     renderTabs();
+    renderUpdateNotifications();
 
     // 恢复 UI 状态变量
     const uiState = configData.ui_state || {};
@@ -348,6 +370,151 @@ document.addEventListener('DOMContentLoaded', async () => {
     return syncStatus;
   }
 
+  async function loadUpdateNotificationsFromStorage() {
+    const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+    updateNotifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+      ? data[FILE_UPDATE_NOTIFICATIONS_KEY].sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0))
+      : [];
+  }
+
+  function getVisibleUpdateNotifications() {
+    if (!currentConfigId && !spConfig) return updateNotifications;
+
+    const configId = currentConfigId || 'legacy';
+    return updateNotifications.filter(item => item.configId === configId);
+  }
+
+  function formatUpdateNotificationTime(notification) {
+    const rawTime = notification.eventType === 'uploaded'
+      ? (notification.createdAt || notification.modifiedAt || notification.detectedAt)
+      : (notification.modifiedAt || notification.detectedAt);
+    const date = new Date(rawTime);
+    if (Number.isNaN(date.getTime())) return '时间未知';
+    return date.toLocaleString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  function getNotificationParentPath(relativeUrl) {
+    if (!relativeUrl) return '文档库根目录';
+    const parts = relativeUrl.split('/');
+    return parts.length > 1 ? parts.slice(0, -1).join('/') : '文档库根目录';
+  }
+
+  function renderUpdateNotifications() {
+    if (!updateNotificationsSection || !updateNotificationsList) return;
+
+    const visibleNotifications = getVisibleUpdateNotifications();
+    updateNotificationsList.innerHTML = '';
+
+    if (visibleNotifications.length === 0) {
+      updateNotificationsSection.classList.add('hide');
+      return;
+    }
+
+    updateNotificationsSection.classList.remove('hide');
+    const unreadCount = visibleNotifications.filter(item => !item.read).length;
+    updateNotificationCount.innerText = unreadCount > 0
+      ? `${unreadCount} 条待查看`
+      : `${visibleNotifications.length} 条记录`;
+    markNotificationsReadBtn.disabled = unreadCount === 0;
+
+    visibleNotifications.slice(0, 30).forEach(notification => {
+      const card = document.createElement('article');
+      card.className = `update-notification-card ${notification.read ? 'is-read' : 'is-unread'} ${notification.eventType}`;
+
+      const icon = document.createElement('div');
+      icon.className = 'update-notification-icon';
+      icon.innerText = '📊';
+
+      const body = document.createElement('div');
+      body.className = 'update-notification-body';
+
+      const titleRow = document.createElement('div');
+      titleRow.className = 'update-notification-title-row';
+
+      const kind = document.createElement('span');
+      kind.className = `update-notification-kind ${notification.eventType}`;
+      kind.innerText = notification.eventType === 'uploaded' ? '新上传' : '已修改';
+      titleRow.appendChild(kind);
+
+      const fileLink = document.createElement('a');
+      fileLink.className = 'update-notification-file-link';
+      fileLink.innerText = notification.name || '未命名 PPT 文件';
+      fileLink.title = '点击直接打开文件';
+      fileLink.href = getOnlineViewUrl(notification.webUrl);
+      fileLink.target = '_blank';
+      fileLink.rel = 'noopener noreferrer';
+      fileLink.addEventListener('click', () => {
+        if (!notification.read) {
+          markFileUpdateNotificationsRead([notification.id]).catch(err => {
+            console.warn('Failed to mark clicked notification as read:', err);
+          });
+        }
+      });
+      titleRow.appendChild(fileLink);
+      body.appendChild(titleRow);
+
+      const description = document.createElement('div');
+      description.className = 'update-notification-description';
+      description.innerText = `${notification.eventType === 'uploaded' ? '已上传到' : '最后修改于'} ${formatUpdateNotificationTime(notification)}`;
+      body.appendChild(description);
+
+      const path = document.createElement('div');
+      path.className = 'update-notification-path';
+      path.title = notification.relativeUrl || '';
+      path.innerText = `📁 ${getNotificationParentPath(notification.relativeUrl)}`;
+      body.appendChild(path);
+
+      if (spConfigs.length > 1 && notification.configName) {
+        const config = document.createElement('div');
+        config.className = 'update-notification-config';
+        config.innerText = `站点：${notification.configName}`;
+        body.appendChild(config);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'update-notification-actions';
+
+      const openLink = document.createElement('a');
+      openLink.className = 'update-notification-open';
+      openLink.innerText = '打开文件 ↗';
+      openLink.href = getOnlineViewUrl(notification.webUrl);
+      openLink.target = '_blank';
+      openLink.rel = 'noopener noreferrer';
+      openLink.addEventListener('click', () => {
+        if (!notification.read) {
+          markFileUpdateNotificationsRead([notification.id]).catch(err => {
+            console.warn('Failed to mark clicked notification as read:', err);
+          });
+        }
+      });
+      actions.appendChild(openLink);
+
+      if (!notification.read) {
+        const readBtn = document.createElement('button');
+        readBtn.className = 'update-notification-read-btn';
+        readBtn.type = 'button';
+        readBtn.title = '标记为已读';
+        readBtn.innerText = '✓';
+        readBtn.addEventListener('click', async () => {
+          await markFileUpdateNotificationsRead([notification.id]);
+          await loadUpdateNotificationsFromStorage();
+          renderUpdateNotifications();
+        });
+        actions.appendChild(readBtn);
+      }
+
+      card.appendChild(icon);
+      card.appendChild(body);
+      card.appendChild(actions);
+      updateNotificationsList.appendChild(card);
+    });
+  }
+
     // 重新从 storage 读取最新数据
   async function loadDataFromStorage() {
     const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config']);
@@ -379,9 +546,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     syncStatus = await loadSyncStatusFromStorage();
     subtreeCache = await loadSubtreeCacheFromStorage();
+    await loadUpdateNotificationsFromStorage();
     
     renderTabs();
     updateSyncTimeDisplay();
+    renderUpdateNotifications();
   }
 
   function updateSyncTimeDisplay() {
@@ -1074,8 +1243,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       const hasSyncStatusChange = Object.keys(changes).some(key => key.startsWith('sync_status_'));
       const hasFavoritesChange = changes.favorites || Object.keys(changes).some(key => key.startsWith('favorites_'));
       const hasL1CacheChange = changes.l1_cache || Object.keys(changes).some(key => key.startsWith('l1_cache_'));
+      const hasUpdateNotificationsChange = Boolean(changes[FILE_UPDATE_NOTIFICATIONS_KEY]);
       
-      if (hasSubtreeChange || hasSyncStatusChange || hasFavoritesChange || hasL1CacheChange || changes.current_config_id || changes.sp_configs) {
+      if (hasSubtreeChange || hasSyncStatusChange || hasFavoritesChange || hasL1CacheChange || hasUpdateNotificationsChange || changes.current_config_id || changes.sp_configs) {
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();

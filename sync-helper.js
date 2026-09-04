@@ -1,6 +1,216 @@
 // sync-helper.js
 // 共享同步模块：支持在 options.js、popup.js 以及 background.js 中使用。
 
+const PRESENTATION_FILE_EXTENSIONS = new Set([
+  'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'ppsm', 'pot', 'potx', 'potm'
+]);
+const FILE_UPDATE_NOTIFICATIONS_KEY = 'file_update_notifications';
+const MAX_FILE_UPDATE_NOTIFICATIONS = 100;
+
+function isPresentationFileName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  return Boolean(match && PRESENTATION_FILE_EXTENSIONS.has(match[1]));
+}
+
+function normalizeSharePointDate(value) {
+  if (!value) return '';
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? '' : new Date(timestamp).toISOString();
+}
+
+function getItemModifiedAt(item) {
+  return normalizeSharePointDate(
+    item?.Modified || item?.TimeLastModified || item?.Last_x0020_Modified || ''
+  );
+}
+
+function getItemCreatedAt(item) {
+  return normalizeSharePointDate(
+    item?.Created || item?.TimeCreated || item?.Created_x0020_Date || ''
+  );
+}
+
+function getFileNameFromPath(relativeUrl) {
+  if (!relativeUrl) return '';
+  const lastPart = relativeUrl.split('/').pop() || '';
+  try {
+    return decodeURIComponent(lastPart);
+  } catch (err) {
+    return lastPart;
+  }
+}
+
+function getCachedItemsById(tree) {
+  const itemsById = new Map();
+  if (!tree || typeof tree !== 'object') return itemsById;
+
+  Object.values(tree).forEach(node => {
+    if (!node) return;
+    [...(node.folders || []), ...(node.files || [])].forEach(item => {
+      if (item && item.id) itemsById.set(item.id, item);
+    });
+  });
+  return itemsById;
+}
+
+function buildFileUpdateEvent(item, eventType) {
+  if (!item || item.type !== 'file' || !isPresentationFileName(item.name)) return null;
+
+  const eventTime = eventType === 'uploaded'
+    ? (item.createdAt || item.modifiedAt || 'new')
+    : item.modifiedAt;
+
+  // 修改提醒必须有可比较的 Modified 时间，避免每次同步都重复生成提醒。
+  if (eventType === 'modified' && !eventTime) return null;
+
+  return {
+    fileId: item.id,
+    name: item.name,
+    relativeUrl: item.relativeUrl,
+    webUrl: item.webUrl,
+    modifiedAt: item.modifiedAt || '',
+    createdAt: item.createdAt || '',
+    eventType,
+    eventTime
+  };
+}
+
+async function updateFileUpdateBadge() {
+  if (!chrome.action || typeof chrome.action.setBadgeText !== 'function') return;
+
+  try {
+    const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+    const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+      ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+      : [];
+    const unreadCount = notifications.filter(item => !item.read).length;
+    const badgeText = unreadCount === 0 ? '' : (unreadCount > 99 ? '99+' : String(unreadCount));
+
+    await chrome.action.setBadgeText({ text: badgeText });
+    if (typeof chrome.action.setBadgeBackgroundColor === 'function') {
+      await chrome.action.setBadgeBackgroundColor({ color: '#ff4d6d' });
+    }
+  } catch (err) {
+    console.warn('[SharePoint Map] Failed to update notification badge:', err);
+  }
+}
+
+async function recordFileUpdateNotifications(configId, config, updateEvents) {
+  const events = Array.isArray(updateEvents) ? updateEvents.filter(Boolean) : [];
+  if (events.length === 0) {
+    await updateFileUpdateBadge();
+    return [];
+  }
+
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const existing = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  const existingKeys = new Set(existing.map(item => item.dedupeKey).filter(Boolean));
+  const effectiveConfigId = configId || 'legacy';
+  const detectedAt = Date.now();
+  const newNotifications = [];
+
+  events.forEach(event => {
+    const dedupeKey = [effectiveConfigId, event.fileId, event.eventType, event.eventTime].join('|');
+    if (existingKeys.has(dedupeKey)) return;
+
+    const notification = {
+      id: `file_update_${effectiveConfigId}_${event.fileId}_${event.eventType}_${event.eventTime}`,
+      dedupeKey,
+      configId: effectiveConfigId,
+      configName: config?.name || config?.libraryName || 'SharePoint 文档库',
+      fileId: event.fileId,
+      name: event.name,
+      type: 'file',
+      relativeUrl: event.relativeUrl,
+      webUrl: event.webUrl,
+      eventType: event.eventType,
+      modifiedAt: event.modifiedAt || '',
+      createdAt: event.createdAt || '',
+      detectedAt,
+      read: false
+    };
+
+    existingKeys.add(dedupeKey);
+    newNotifications.push(notification);
+  });
+
+  if (newNotifications.length === 0) {
+    await updateFileUpdateBadge();
+    return [];
+  }
+
+  const allNotifications = [...existing, ...newNotifications]
+    .sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0))
+    .slice(0, MAX_FILE_UPDATE_NOTIFICATIONS);
+
+  await chrome.storage.local.set({
+    [FILE_UPDATE_NOTIFICATIONS_KEY]: allNotifications
+  });
+  await updateFileUpdateBadge();
+  return newNotifications;
+}
+
+async function markFileUpdateNotificationsRead(ids) {
+  const idSet = new Set(Array.isArray(ids) ? ids : []);
+  if (idSet.size === 0) return 0;
+
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const existing = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  let changedCount = 0;
+  const updated = existing.map(item => {
+    if (idSet.has(item.id) && !item.read) {
+      changedCount += 1;
+      return { ...item, read: true };
+    }
+    return item;
+  });
+
+  if (changedCount > 0) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
+  }
+  await updateFileUpdateBadge();
+  return changedCount;
+}
+
+async function markAllFileUpdateNotificationsRead(configId) {
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const existing = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  let changedCount = 0;
+  const updated = existing.map(item => {
+    if ((!configId || item.configId === configId) && !item.read) {
+      changedCount += 1;
+      return { ...item, read: true };
+    }
+    return item;
+  });
+
+  if (changedCount > 0) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
+  }
+  await updateFileUpdateBadge();
+  return changedCount;
+}
+
+async function removeFileUpdateNotificationsForConfig(configId) {
+  if (!configId) return;
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const existing = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  const updated = existing.filter(item => item.configId !== configId);
+  if (updated.length !== existing.length) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
+  }
+  await updateFileUpdateBadge();
+}
+
 // 核心配置迁移函数
 async function migrateConfigsIfNeeded() {
   const data = await chrome.storage.local.get(['sp_config', 'sp_configs', 'current_config_id', 'l1_cache', 'favorites']);
@@ -207,6 +417,8 @@ async function syncLevel1(configId) {
         type: 'folder',
         relativeUrl: item.ServerRelativeUrl,
         webUrl: `${siteUrl.split('/sites/')[0]}${item.ServerRelativeUrl}`,
+        modifiedAt: getItemModifiedAt(item),
+        createdAt: getItemCreatedAt(item),
         level: 1
       });
     });
@@ -219,6 +431,8 @@ async function syncLevel1(configId) {
         type: 'file',
         relativeUrl: item.ServerRelativeUrl,
         webUrl: `${siteUrl.split('/sites/')[0]}${item.ServerRelativeUrl}`,
+        modifiedAt: getItemModifiedAt(item),
+        createdAt: getItemCreatedAt(item),
         level: 1
       });
     });
@@ -262,7 +476,7 @@ async function syncLevel1(configId) {
   }
 }
 // 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (支持增量和全量更新)
-async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
+async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
   await migrateConfigsIfNeeded();
 
   let siteUrl = '';
@@ -363,6 +577,10 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     const cachedData = storageData[storageKey];
     const oldTree = cachedData?.tree;
     const lastSyncTime = cachedData?.last_updated || 0;
+    const hasPreviousSnapshot = Boolean(cachedData && cachedData.tree);
+    const oldItemsById = getCachedItemsById(oldTree);
+    const shouldDetectUpdates = syncOptions.notifyUpdates === true;
+    let updateEvents = [];
 
     // 如果没有历史缓存，或者缓存的根目录路径与当前路径不符，强制进行首次全量同步
     const forceFullSync = !oldTree || !cachedData || !oldTree[l1FolderRelativeUrl];
@@ -391,19 +609,19 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
         const node = oldTree[parentPath];
         if (node.folders) {
           node.folders.forEach(f => {
-            cacheIdToPath[f.id] = { path: f.relativeUrl, type: 'folder', parent: parentPath };
+            cacheIdToPath[f.id] = { ...f, path: f.relativeUrl, type: 'folder', parent: parentPath };
           });
         }
         if (node.files) {
           node.files.forEach(f => {
-            cacheIdToPath[f.id] = { path: f.relativeUrl, type: 'file', parent: parentPath };
+            cacheIdToPath[f.id] = { ...f, path: f.relativeUrl, type: 'file', parent: parentPath };
           });
         }
       });
 
       // 查询在此时间之后修改过的所有文件和文件夹
       const isoString = new Date(lastSyncTime).toISOString();
-      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=Modified gt datetime'${isoString}'&$select=FileRef,FileSystemObjectType,UniqueId&$top=5000`;
+      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=Modified gt datetime'${isoString}'&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified&$top=5000`;
 
       try {
         const res = await fetch(modifiedItemsUrl, { method: 'GET', headers });
@@ -419,10 +637,39 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
             const isUnderL1 = newPath === l1FolderRelativeUrl || newPath.startsWith(l1FolderRelativeUrl + '/');
             if (!isUnderL1) return;
 
+            const isFolderItem = Number(item.FileSystemObjectType) === 1;
             const oldInfo = cacheIdToPath[item.UniqueId];
             const hasPathChanged = oldInfo && oldInfo.path !== newPath;
 
-            if (item.FileSystemObjectType === 1) {
+            if (shouldDetectUpdates && !isFolderItem) {
+              const currentItem = {
+                id: item.UniqueId,
+                name: item.FileLeafRef || getFileNameFromPath(newPath),
+                type: 'file',
+                relativeUrl: newPath,
+                webUrl: `${baseUrl}${newPath}`,
+                modifiedAt: getItemModifiedAt(item),
+                createdAt: getItemCreatedAt(item)
+              };
+              const previousItem = oldItemsById.get(item.UniqueId);
+              const currentModifiedMs = Date.parse(currentItem.modifiedAt);
+              const previousModifiedMs = Date.parse(previousItem?.modifiedAt || '');
+
+              if (!previousItem && hasPreviousSnapshot) {
+                const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded');
+                if (uploadEvent) updateEvents.push(uploadEvent);
+              } else if (
+                previousItem &&
+                Number.isFinite(currentModifiedMs) &&
+                Number.isFinite(previousModifiedMs) &&
+                currentModifiedMs > previousModifiedMs
+              ) {
+                const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified');
+                if (modifiedEvent) updateEvents.push(modifiedEvent);
+              }
+            }
+
+            if (isFolderItem) {
               // 1. 文件夹变动
               if (hasPathChanged) {
                 console.log(`[SharePoint Map] Incremental sync - Folder renamed/moved: ${oldInfo.path} -> ${newPath}`);
@@ -520,7 +767,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                   name: item.Name,
                   type: 'folder',
                   relativeUrl: item.ServerRelativeUrl,
-                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                  modifiedAt: getItemModifiedAt(item),
+                  createdAt: getItemCreatedAt(item)
                 };
                 return folderObj;
               });
@@ -531,7 +780,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                 name: item.Name,
                 type: 'file',
                 relativeUrl: item.ServerRelativeUrl,
-                webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                modifiedAt: getItemModifiedAt(item),
+                createdAt: getItemCreatedAt(item)
               };
               return fileObj;
             });
@@ -614,7 +865,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                     name: item.Name,
                     type: 'folder',
                     relativeUrl: item.ServerRelativeUrl,
-                    webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                    webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                    modifiedAt: getItemModifiedAt(item),
+                    createdAt: getItemCreatedAt(item)
                   };
                   return folderObj;
                 });
@@ -625,7 +878,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
                   name: item.Name,
                   type: 'file',
                   relativeUrl: item.ServerRelativeUrl,
-                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`
+                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                  modifiedAt: getItemModifiedAt(item),
+                  createdAt: getItemCreatedAt(item)
                 };
                 return fileObj;
               });
@@ -673,6 +928,32 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
       }
     }
 
+    // 全量同步时用同步前快照比较新增/修改的 PPT。首次建立缓存只做基线，不生成提醒。
+    if (shouldDetectUpdates && isFullSync && hasPreviousSnapshot) {
+      const newItemsById = getCachedItemsById(folderTreeCache);
+      newItemsById.forEach(currentItem => {
+        if (currentItem.type !== 'file' || !isPresentationFileName(currentItem.name)) return;
+
+        const previousItem = oldItemsById.get(currentItem.id);
+        if (!previousItem) {
+          const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded');
+          if (uploadEvent) updateEvents.push(uploadEvent);
+          return;
+        }
+
+        const currentModifiedMs = Date.parse(currentItem.modifiedAt || '');
+        const previousModifiedMs = Date.parse(previousItem.modifiedAt || '');
+        if (
+          Number.isFinite(currentModifiedMs) &&
+          Number.isFinite(previousModifiedMs) &&
+          currentModifiedMs > previousModifiedMs
+        ) {
+          const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified');
+          if (modifiedEvent) updateEvents.push(modifiedEvent);
+        }
+      });
+    }
+
     // 从最终的 folderTreeCache 中重新构建完整的 allDiscoveredItems 映射，确保自愈机制能覆盖到未变动的项目
     const allDiscoveredItems = {};
     Object.keys(folderTreeCache).forEach(parentPath => {
@@ -690,23 +971,32 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
     });
 
     // 自动更新收藏夹中可能发生重命名或路径变更的深层项目
-    const favData = await chrome.storage.local.get('favorites');
-    const favoritesList = favData.favorites;
+    const favoritesKey = targetConfigId ? `favorites_${targetConfigId}` : 'favorites';
+    const favData = await chrome.storage.local.get(favoritesKey);
+    const favoritesList = favData[favoritesKey];
     if (favoritesList && Array.isArray(favoritesList)) {
       let updatedFavs = false;
       favoritesList.forEach(fav => {
         const matchingItem = allDiscoveredItems[fav.id];
         if (matchingItem) {
-          if (fav.name !== matchingItem.name || fav.relativeUrl !== matchingItem.relativeUrl || fav.webUrl !== matchingItem.webUrl) {
+          if (
+            fav.name !== matchingItem.name ||
+            fav.relativeUrl !== matchingItem.relativeUrl ||
+            fav.webUrl !== matchingItem.webUrl ||
+            fav.modifiedAt !== matchingItem.modifiedAt ||
+            fav.createdAt !== matchingItem.createdAt
+          ) {
             fav.name = matchingItem.name;
             fav.relativeUrl = matchingItem.relativeUrl;
             fav.webUrl = matchingItem.webUrl;
+            fav.modifiedAt = matchingItem.modifiedAt;
+            fav.createdAt = matchingItem.createdAt;
             updatedFavs = true;
           }
         }
       });
       if (updatedFavs) {
-        await chrome.storage.local.set({ favorites: favoritesList });
+        await chrome.storage.local.set({ [favoritesKey]: favoritesList });
         console.log('[SharePoint Map] Self-healed deep items in favorites.');
       }
     }
@@ -718,6 +1008,15 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
         tree: folderTreeCache
       }
     });
+
+    if (shouldDetectUpdates && updateEvents.length > 0) {
+      const config = targetConfigId
+        ? (await chrome.storage.local.get('sp_configs')).sp_configs?.find(item => item.id === targetConfigId)
+        : data.sp_config;
+      await recordFileUpdateNotifications(targetConfigId, config, updateEvents);
+    } else if (shouldDetectUpdates) {
+      await updateFileUpdateBadge();
+    }
     return nodeCount;
 
   } finally {
@@ -735,7 +1034,8 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl) {
 }
 
 // 3. 后台定时器全量重新同步主函数
-async function performAllSync() {
+async function performAllSync(options = {}) {
+  const notifyUpdates = options.notifyUpdates === true;
   try {
     await migrateConfigsIfNeeded();
     const { sp_configs } = await chrome.storage.local.get('sp_configs');
@@ -760,7 +1060,7 @@ async function performAllSync() {
               const matchingL1 = l1Items.find(item => item.id === favFolder.id);
               if (matchingL1) {
                 try {
-                  await syncSubtree(favFolder.id, matchingL1.relativeUrl);
+                  await syncSubtree(favFolder.id, matchingL1.relativeUrl, { notifyUpdates });
                 } catch (err) {
                   console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
                 }
@@ -787,7 +1087,7 @@ async function performAllSync() {
           const matchingL1 = l1Items.find(item => item.id === favFolder.id);
           if (matchingL1) {
             try {
-              await syncSubtree(favFolder.id, matchingL1.relativeUrl);
+              await syncSubtree(favFolder.id, matchingL1.relativeUrl, { notifyUpdates });
             } catch (err) {
               console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
             }

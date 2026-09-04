@@ -794,3 +794,211 @@ body {
   background: linear-gradient(90deg, var(--primary-cyan), var(--primary-blue));
   border-radius: 2px;
 }
+
+/* PPT 更新会议通知 */
+.update-notifications-section {
+  padding: 13px;
+  border: 1px solid rgba(255, 92, 130, 0.28);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 46, 99, 0.12), rgba(255, 255, 255, 0.025));
+  box-shadow: 0 8px 24px rgba(255, 46, 99, 0.08);
+}
+
+.update-notifications-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.update-notifications-title {
+  color: rgba(255, 220, 228, 0.9);
+  margin-bottom: 3px;
+}
+
+.update-notifications-subtitle {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.update-notifications-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.update-notification-count {
+  color: #ff91a9;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mark-notifications-read-btn {
+  border: 1px solid rgba(255, 145, 169, 0.28);
+  border-radius: 6px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mark-notifications-read-btn:hover:not(:disabled) {
+  color: #fff;
+  border-color: rgba(255, 145, 169, 0.65);
+  background: rgba(255, 46, 99, 0.16);
+}
+
+.mark-notifications-read-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.update-notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.update-notification-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(8, 9, 14, 0.32);
+  transition: all 0.2s ease;
+}
+
+.update-notification-card:hover {
+  border-color: rgba(255, 145, 169, 0.38);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateX(2px);
+}
+
+.update-notification-card.is-unread {
+  border-left: 3px solid #ff5c82;
+}
+
+.update-notification-card.is-read {
+  opacity: 0.72;
+}
+
+.update-notification-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 190, 71, 0.12);
+  font-size: 16px;
+}
+
+.update-notification-body {
+  min-width: 0;
+}
+
+.update-notification-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.update-notification-kind {
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: #ffc5d1;
+  background: rgba(255, 46, 99, 0.2);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.update-notification-kind.uploaded {
+  color: #b8f6df;
+  background: rgba(47, 207, 151, 0.16);
+}
+
+.update-notification-file-link {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notification-file-link:hover {
+  color: var(--primary-cyan);
+  text-decoration: underline;
+}
+
+.update-notification-description,
+.update-notification-path,
+.update-notification-config {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notification-description {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.update-notification-path {
+  margin-top: 2px;
+}
+
+.update-notification-config {
+  margin-top: 2px;
+  color: rgba(0, 240, 255, 0.62);
+}
+
+.update-notification-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.update-notification-open {
+  padding: 5px 7px;
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  border-radius: 6px;
+  color: var(--primary-cyan);
+  font-size: 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.update-notification-open:hover {
+  border-color: var(--primary-cyan);
+  background: rgba(0, 240, 255, 0.1);
+}
+
+.update-notification-read-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.update-notification-read-btn:hover {
+  color: #b8f6df;
+  border-color: rgba(47, 207, 151, 0.5);
+}

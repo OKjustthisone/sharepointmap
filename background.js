@@ -2,6 +2,9 @@
 // 引入共享同步逻辑
 importScripts('sync-helper.js');
 
+const DAILY_UPDATE_ALARM_NAME = 'daily_update_alarm';
+const LEGACY_WEEKDAY_ALARM_NAME = 'weekday_sync_alarm';
+
 // 启动时清除任何遗留的正在同步状态，防止 Service Worker 重启或崩溃后状态卡在“同步中”
 chrome.storage.local.get(null, (allData) => {
   const keysToRemove = Object.keys(allData).filter(key => key.startsWith('sync_status_') || key === 'sync_status');
@@ -12,36 +15,43 @@ chrome.storage.local.get(null, (allData) => {
   }
 });
 
-// 计算下一个工作日 10 点的时间戳
-function getNextWeekday10AM(now) {
+// Service Worker 启动时恢复扩展图标上的未读提醒数量。
+updateFileUpdateBadge().catch(err => {
+  console.warn('[SharePoint Map] Failed to initialize notification badge:', err);
+});
+
+// 计算下一个本地时间每天 10:00 的时间戳。
+function getNextDaily10AM(now) {
   const date = new Date(now);
   date.setHours(10, 0, 0, 0);
 
-  // 如果当前时间已经过了今天的 10 点，则移到明天
+  // 如果当前时间已经到或超过今天的 10 点，则移到明天。
   if (date.getTime() <= now) {
-    date.setDate(date.getDate() + 1);
-  }
-
-  // 过滤掉周六 (6) 和周日 (0)，如果是周末则持续往后移直到周一
-  while (date.getDay() === 0 || date.getDay() === 6) {
     date.setDate(date.getDate() + 1);
   }
 
   return date.getTime();
 }
 
-function scheduleNextWeekdayAlarm() {
-  const nextTime = getNextWeekday10AM(Date.now());
-  chrome.alarms.create('weekday_sync_alarm', { when: nextTime });
-  console.log('Scheduled next weekday sync for:', new Date(nextTime).toString());
+function scheduleNextDailyAlarm() {
+  const nextTime = getNextDaily10AM(Date.now());
+  chrome.alarms.create(DAILY_UPDATE_ALARM_NAME, { when: nextTime });
+  console.log('Scheduled next daily 10 AM update for:', new Date(nextTime).toString());
 }
 
-// 检查并确保工作日 10 点的 Alarm 已设置
-chrome.alarms.get('weekday_sync_alarm', (alarm) => {
+// 检查并确保每天 10 点的 Alarm 已设置。
+chrome.alarms.get(DAILY_UPDATE_ALARM_NAME, (alarm) => {
   if (!alarm) {
-    scheduleNextWeekdayAlarm();
+    scheduleNextDailyAlarm();
   } else {
-    console.log('Weekday sync alarm already scheduled for:', new Date(alarm.scheduledTime).toString());
+    console.log('Daily 10 AM update alarm already scheduled for:', new Date(alarm.scheduledTime).toString());
+  }
+});
+
+// 清理旧版本的工作日 Alarm，避免同一扩展产生两次同步。
+chrome.alarms.get(LEGACY_WEEKDAY_ALARM_NAME, (alarm) => {
+  if (alarm) {
+    chrome.alarms.clear(LEGACY_WEEKDAY_ALARM_NAME);
   }
 });
 
@@ -50,8 +60,8 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('SharePoint Quick Access extension installed.');
   // 设置 7 天定时任务 (7 * 24 * 60 分钟)
   chrome.alarms.create('sync_all_data', { periodInMinutes: 7 * 24 * 60 });
-  // 设置工作日 10 点定时同步
-  scheduleNextWeekdayAlarm();
+  // 设置每天 10 点定时同步并生成 PPT 更新提醒
+  scheduleNextDailyAlarm();
 
   // 创建右键菜单以支持选中文本在网页中搜索
   chrome.contextMenus.create({
@@ -63,22 +73,22 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // 监听 Alarm 触发
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'weekday_sync_alarm') {
-    console.log('Weekday 10 AM sync alarm triggered. Syncing all favorited directories...');
-    performAllSync()
+  if (alarm.name === DAILY_UPDATE_ALARM_NAME || alarm.name === LEGACY_WEEKDAY_ALARM_NAME) {
+    console.log('Daily 10 AM sync alarm triggered. Syncing favorited directories and checking PPT updates...');
+    performAllSync({ notifyUpdates: true })
       .then(() => {
-        console.log('Weekday 10 AM sync completed successfully.');
+        console.log('Daily 10 AM sync and PPT update check completed successfully.');
       })
       .catch((err) => {
-        console.error('Weekday 10 AM sync failed:', err);
+        console.error('Daily 10 AM sync failed:', err);
       })
       .finally(() => {
-        // 无论成功还是失败，都安排下一次的工作日同步
-        scheduleNextWeekdayAlarm();
+        // 无论成功还是失败，都安排下一次的每日同步。
+        scheduleNextDailyAlarm();
       });
   } else if (alarm.name === 'sync_all_data') {
     console.log('Scheduled alarm triggered. Syncing all SharePoint data...');
-    performAllSync();
+    performAllSync({ notifyUpdates: false });
   }
 });
 
@@ -102,6 +112,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((nodeCount) => sendResponse({ success: true, count: nodeCount }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;
+  }
+  if (request.action === 'mark_update_notifications_read') {
+    markFileUpdateNotificationsRead(request.ids)
+      .then((count) => sendResponse({ success: true, count }))
+      .catch((err) => sendResponse({ success: false, error: err.message || err }));
+    return true;
+  }
+  if (request.action === 'mark_all_update_notifications_read') {
+    markAllFileUpdateNotificationsRead(request.configId || '')
+      .then((count) => sendResponse({ success: true, count }))
+      .catch((err) => sendResponse({ success: false, error: err.message || err }));
+    return true;
+  }
+});
+
+// 其他扩展页面直接修改提醒状态时，也及时同步徽标。
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes[FILE_UPDATE_NOTIFICATIONS_KEY]) {
+    updateFileUpdateBadge();
   }
 });
 

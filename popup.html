@@ -44,6 +44,21 @@
 
     <!-- 主要内容区 -->
     <main class="main-content">
+      <!-- PPT 更新会议通知 -->
+      <section id="updateNotificationsSection" class="content-section update-notifications-section hide">
+        <div class="update-notifications-header">
+          <div>
+            <h3 class="section-title update-notifications-title">📅 会议通知</h3>
+            <p class="update-notifications-subtitle">收藏目录中的 PPT 文件更新</p>
+          </div>
+          <div class="update-notifications-header-actions">
+            <span id="updateNotificationCount" class="update-notification-count"></span>
+            <button id="markNotificationsReadBtn" class="mark-notifications-read-btn" type="button">全部已读</button>
+          </div>
+        </div>
+        <div id="updateNotificationsList" class="update-notifications-list"></div>
+      </section>
+
       <!-- 搜索结果视图 (默认隐藏) -->
       <section id="searchResultsSection" class="content-section hide">
         <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
