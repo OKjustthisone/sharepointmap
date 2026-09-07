@@ -420,10 +420,92 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function getNotificationParentPath(relativeUrl) {
-    if (!relativeUrl) return '文档库根目录';
-    const parts = relativeUrl.split('/');
-    return parts.length > 1 ? parts.slice(0, -1).join('/') : '文档库根目录';
+  function decodeNotificationPathPart(value) {
+    try {
+      return decodeURIComponent(value);
+    } catch (err) {
+      return value;
+    }
+  }
+
+  function getNotificationPathSegments(value) {
+    return String(value || '')
+      .split('/')
+      .filter(Boolean)
+      .map(decodeNotificationPathPart);
+  }
+
+  function getNotificationConfig(notification) {
+    return spConfigs.find(config => config.id === notification?.configId) || spConfig || null;
+  }
+
+  function getNotificationSiteName(notification, config) {
+    if (config?.siteUrl) {
+      try {
+        const siteUrl = new URL(config.siteUrl);
+        const sitePath = getNotificationPathSegments(siteUrl.pathname);
+        return sitePath[sitePath.length - 1] || siteUrl.hostname;
+      } catch (err) {
+        // 继续从文件的 server-relative 路径中解析站点名称。
+      }
+    }
+
+    const relativePath = getNotificationPathSegments(notification?.relativeUrl);
+    const siteMarkerIndex = relativePath.findIndex(part => ['sites', 'teams'].includes(part.toLowerCase()));
+    return relativePath[siteMarkerIndex + 1] || config?.name || 'SharePoint';
+  }
+
+  function findNotificationPathSequence(parts, sequence) {
+    if (sequence.length === 0) return -1;
+
+    for (let index = 0; index <= parts.length - sequence.length; index += 1) {
+      const isMatch = sequence.every((part, offset) => (
+        parts[index + offset].toLowerCase() === part.toLowerCase()
+      ));
+      if (isMatch) return index;
+    }
+
+    return -1;
+  }
+
+  function getNotificationFirstLevelDirectory(notification, config) {
+    const pathParts = getNotificationPathSegments(notification?.relativeUrl);
+    if (pathParts.length < 2) return '文档库根目录';
+
+    const parentParts = pathParts.slice(0, -1);
+    const libraryName = decodeNotificationPathPart(String(config?.libraryName || '').trim()).toLowerCase();
+    let libraryIndex = libraryName
+      ? parentParts.findIndex(part => part.toLowerCase() === libraryName)
+      : -1;
+
+    if (libraryIndex < 0 && config?.siteUrl) {
+      try {
+        const sitePath = getNotificationPathSegments(new URL(config.siteUrl).pathname);
+        const siteIndex = findNotificationPathSequence(parentParts, sitePath);
+        if (siteIndex >= 0) libraryIndex = siteIndex + sitePath.length;
+      } catch (err) {
+        // 使用下面的 SharePoint 默认路径规则兜底。
+      }
+    }
+
+    if (libraryIndex < 0) {
+      const knownLibraries = ['shared documents', 'documents', '共享文档', '文档'];
+      libraryIndex = parentParts.findIndex(part => knownLibraries.includes(part.toLowerCase()));
+    }
+
+    if (libraryIndex < 0) {
+      const siteMarkerIndex = parentParts.findIndex(part => ['sites', 'teams'].includes(part.toLowerCase()));
+      libraryIndex = siteMarkerIndex >= 0 ? siteMarkerIndex + 2 : 0;
+    }
+
+    return parentParts[libraryIndex + 1] || '文档库根目录';
+  }
+
+  function getNotificationLocation(notification) {
+    const config = getNotificationConfig(notification);
+    const siteName = getNotificationSiteName(notification, config);
+    const firstLevelDirectory = getNotificationFirstLevelDirectory(notification, config);
+    return `站点：${siteName} / 一级目录：${firstLevelDirectory}`;
   }
 
   function updateNotificationBell(visibleNotifications) {
@@ -487,7 +569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const fileLink = document.createElement('a');
       fileLink.className = 'update-notification-file-link';
-      fileLink.innerText = notification.name || '未命名 PPT 文件';
+      fileLink.innerText = notification.name || '未命名文件';
       fileLink.title = '点击直接打开文件';
       fileLink.href = getOnlineViewUrl(notification.webUrl);
       fileLink.target = '_blank';
@@ -510,15 +592,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const path = document.createElement('div');
       path.className = 'update-notification-path';
       path.title = notification.relativeUrl || '';
-      path.innerHTML = `${svgIcon('folder', 'path-svg')}<span>${getNotificationParentPath(notification.relativeUrl)}</span>`;
+      path.innerHTML = svgIcon('folder', 'path-svg');
+      const pathLabel = document.createElement('span');
+      pathLabel.innerText = getNotificationLocation(notification);
+      path.appendChild(pathLabel);
       body.appendChild(path);
-
-      if (spConfigs.length > 1 && notification.configName) {
-        const config = document.createElement('div');
-        config.className = 'update-notification-config';
-        config.innerText = `站点：${notification.configName}`;
-        body.appendChild(config);
-      }
 
       const actions = document.createElement('div');
       actions.className = 'update-notification-actions';

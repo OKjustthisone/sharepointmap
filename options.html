@@ -47,6 +47,45 @@
           <p class="input-tip">微软默认英文名为 <code>Shared Documents</code>，中文系统通常为 <code>共享文档</code> 或 <code>文档</code>。</p>
         </div>
 
+        <div class="form-group notification-settings-group">
+          <label>文件更新通知类型</label>
+          <div class="notification-file-types" id="notificationFileTypes">
+            <label class="notification-type-option">
+              <input type="checkbox" name="notificationFileTypes" value="ppt" checked>
+              <span class="notification-type-check" aria-hidden="true"></span>
+              <span class="notification-type-copy">
+                <strong>PowerPoint</strong>
+                <small>.ppt、.pptx、.pptm、.pps、.ppsx 等</small>
+              </span>
+            </label>
+            <label class="notification-type-option">
+              <input type="checkbox" name="notificationFileTypes" value="word">
+              <span class="notification-type-check" aria-hidden="true"></span>
+              <span class="notification-type-copy">
+                <strong>Word</strong>
+                <small>.doc、.docx、.docm、.dotx 等</small>
+              </span>
+            </label>
+            <label class="notification-type-option">
+              <input type="checkbox" name="notificationFileTypes" value="excel">
+              <span class="notification-type-check" aria-hidden="true"></span>
+              <span class="notification-type-copy">
+                <strong>Excel</strong>
+                <small>.xls、.xlsx、.xlsm、.xlsb 等</small>
+              </span>
+            </label>
+            <label class="notification-type-option">
+              <input type="checkbox" name="notificationFileTypes" value="pdf">
+              <span class="notification-type-check" aria-hidden="true"></span>
+              <span class="notification-type-copy">
+                <strong>PDF</strong>
+                <small>.pdf</small>
+              </span>
+            </label>
+          </div>
+          <p class="input-tip">每天 10:00 同步收藏目录时，只对勾选的文件类型生成更新提醒；全部取消则关闭文件更新提醒。</p>
+        </div>
+
         <div class="form-buttons">
           <button id="saveBtn" class="btn btn-primary">保存并测试连接</button>
           <button id="cancelBtn" class="btn btn-secondary hide">取消编辑</button>

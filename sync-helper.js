@@ -1,11 +1,61 @@
 // sync-helper.js
 // 共享同步模块：支持在 options.js、popup.js 以及 background.js 中使用。
 
-const PRESENTATION_FILE_EXTENSIONS = new Set([
-  'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'ppsm', 'pot', 'potx', 'potm'
+const NOTIFICATION_FILE_TYPE_OPTIONS = Object.freeze([
+  Object.freeze({
+    id: 'ppt',
+    extensions: Object.freeze(['ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'ppsm', 'pot', 'potx', 'potm'])
+  }),
+  Object.freeze({
+    id: 'word',
+    extensions: Object.freeze(['doc', 'docx', 'docm', 'dot', 'dotx', 'dotm'])
+  }),
+  Object.freeze({
+    id: 'excel',
+    extensions: Object.freeze(['xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm'])
+  }),
+  Object.freeze({
+    id: 'pdf',
+    extensions: Object.freeze(['pdf'])
+  })
 ]);
+const DEFAULT_NOTIFICATION_FILE_TYPES = Object.freeze(['ppt']);
+const PRESENTATION_FILE_EXTENSIONS = new Set(
+  NOTIFICATION_FILE_TYPE_OPTIONS.find(option => option.id === 'ppt').extensions
+);
 const FILE_UPDATE_NOTIFICATIONS_KEY = 'file_update_notifications';
 const MAX_FILE_UPDATE_NOTIFICATIONS = 100;
+
+function normalizeNotificationFileTypes(value) {
+  const values = Array.isArray(value) ? value : DEFAULT_NOTIFICATION_FILE_TYPES;
+  const selected = new Set(
+    values
+      .map(item => String(item).trim().toLowerCase().replace(/^\./, ''))
+      .filter(Boolean)
+  );
+
+  return NOTIFICATION_FILE_TYPE_OPTIONS
+    .filter(option => selected.has(option.id) || option.extensions.some(ext => selected.has(ext)))
+    .map(option => option.id);
+}
+
+function getNotificationFileExtensions(config) {
+  const selectedTypes = normalizeNotificationFileTypes(config?.notificationFileTypes);
+  const extensions = new Set();
+
+  selectedTypes.forEach(typeId => {
+    const option = NOTIFICATION_FILE_TYPE_OPTIONS.find(item => item.id === typeId);
+    option?.extensions.forEach(extension => extensions.add(extension));
+  });
+
+  return extensions;
+}
+
+function isNotificationFileName(name, config) {
+  if (!name || typeof name !== 'string') return false;
+  const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  return Boolean(match && getNotificationFileExtensions(config).has(match[1]));
+}
 
 function isPresentationFileName(name) {
   if (!name || typeof name !== 'string') return false;
@@ -54,8 +104,8 @@ function getCachedItemsById(tree) {
   return itemsById;
 }
 
-function buildFileUpdateEvent(item, eventType) {
-  if (!item || item.type !== 'file' || !isPresentationFileName(item.name)) return null;
+function buildFileUpdateEvent(item, eventType, config) {
+  if (!item || item.type !== 'file' || !isNotificationFileName(item.name, config)) return null;
 
   const eventTime = eventType === 'uploaded'
     ? (item.createdAt || item.modifiedAt || 'new')
@@ -214,8 +264,25 @@ async function removeFileUpdateNotificationsForConfig(configId) {
 // 核心配置迁移函数
 async function migrateConfigsIfNeeded() {
   const data = await chrome.storage.local.get(['sp_config', 'sp_configs', 'current_config_id', 'l1_cache', 'favorites']);
-  
-  if (!data.sp_configs && data.sp_config && data.sp_config.siteUrl) {
+  const updates = {};
+
+  if (Array.isArray(data.sp_configs)) {
+    let hasChanges = false;
+    const normalizedConfigs = data.sp_configs.map(config => {
+      const notificationFileTypes = normalizeNotificationFileTypes(config?.notificationFileTypes);
+      const currentTypes = Array.isArray(config?.notificationFileTypes)
+        ? config.notificationFileTypes
+        : null;
+      const isSame = currentTypes && currentTypes.length === notificationFileTypes.length
+        && currentTypes.every((type, index) => type === notificationFileTypes[index]);
+
+      if (isSame) return config;
+      hasChanges = true;
+      return { ...config, notificationFileTypes };
+    });
+
+    if (hasChanges) updates.sp_configs = normalizedConfigs;
+  } else if (data.sp_config && data.sp_config.siteUrl) {
     const defaultId = 'config_default';
     const siteUrl = data.sp_config.siteUrl;
     const libraryName = data.sp_config.libraryName || 'Shared Documents';
@@ -226,13 +293,14 @@ async function migrateConfigsIfNeeded() {
       name: libraryName === 'Shared Documents' ? '默认文档库' : libraryName,
       siteUrl: siteUrl,
       libraryName: libraryName,
-      siteOrigin: siteOrigin
+      siteOrigin: siteOrigin,
+      notificationFileTypes: normalizeNotificationFileTypes(data.sp_config.notificationFileTypes)
     }];
     
-    const updates = {
+    Object.assign(updates, {
       sp_configs: defaultConfigs,
       current_config_id: defaultId
-    };
+    });
     
     if (data.l1_cache) {
       updates[`l1_cache_${defaultId}`] = data.l1_cache;
@@ -242,8 +310,11 @@ async function migrateConfigsIfNeeded() {
       updates[`favorites_${defaultId}`] = data.favorites;
     }
     
+  }
+
+  if (Object.keys(updates).length > 0) {
     await chrome.storage.local.set(updates);
-    console.log('[Migration] Migrated legacy sp_config to sp_configs successfully.');
+    console.log('[Migration] Normalized SharePoint configuration settings successfully.');
   }
 }
 
@@ -482,6 +553,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
   let siteUrl = '';
   let libraryName = '';
   let targetConfigId = '';
+  let targetConfig = null;
 
   const data = await chrome.storage.local.get(['sp_configs', 'sp_config', 'current_config_id']);
   const configs = data.sp_configs || [];
@@ -493,6 +565,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
       siteUrl = config.siteUrl;
       libraryName = config.libraryName;
       targetConfigId = config.id;
+      targetConfig = config;
       break;
     }
   }
@@ -503,6 +576,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
       siteUrl = data.sp_config.siteUrl;
       libraryName = data.sp_config.libraryName;
+      targetConfig = data.sp_config;
     }
   }
 
@@ -513,9 +587,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
       siteUrl = config.siteUrl;
       libraryName = config.libraryName;
       targetConfigId = config.id;
+      targetConfig = config;
     } else if (data.sp_config) {
       siteUrl = data.sp_config.siteUrl;
       libraryName = data.sp_config.libraryName;
+      targetConfig = data.sp_config;
     }
   }
 
@@ -656,7 +732,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
               const previousModifiedMs = Date.parse(previousItem?.modifiedAt || '');
 
               if (!previousItem && hasPreviousSnapshot) {
-                const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded');
+                const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded', targetConfig);
                 if (uploadEvent) updateEvents.push(uploadEvent);
               } else if (
                 previousItem &&
@@ -664,7 +740,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
                 Number.isFinite(previousModifiedMs) &&
                 currentModifiedMs > previousModifiedMs
               ) {
-                const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified');
+                const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified', targetConfig);
                 if (modifiedEvent) updateEvents.push(modifiedEvent);
               }
             }
@@ -932,11 +1008,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     if (shouldDetectUpdates && isFullSync && hasPreviousSnapshot) {
       const newItemsById = getCachedItemsById(folderTreeCache);
       newItemsById.forEach(currentItem => {
-        if (currentItem.type !== 'file' || !isPresentationFileName(currentItem.name)) return;
+        if (currentItem.type !== 'file' || !isNotificationFileName(currentItem.name, targetConfig)) return;
 
         const previousItem = oldItemsById.get(currentItem.id);
         if (!previousItem) {
-          const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded');
+          const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded', targetConfig);
           if (uploadEvent) updateEvents.push(uploadEvent);
           return;
         }
@@ -948,7 +1024,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
           Number.isFinite(previousModifiedMs) &&
           currentModifiedMs > previousModifiedMs
         ) {
-          const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified');
+          const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified', targetConfig);
           if (modifiedEvent) updateEvents.push(modifiedEvent);
         }
       });
@@ -1010,10 +1086,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     });
 
     if (shouldDetectUpdates && updateEvents.length > 0) {
-      const config = targetConfigId
-        ? (await chrome.storage.local.get('sp_configs')).sp_configs?.find(item => item.id === targetConfigId)
-        : data.sp_config;
-      await recordFileUpdateNotifications(targetConfigId, config, updateEvents);
+      await recordFileUpdateNotifications(targetConfigId, targetConfig, updateEvents);
     } else if (shouldDetectUpdates) {
       await updateFileUpdateBadge();
     }

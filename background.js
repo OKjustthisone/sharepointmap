@@ -60,7 +60,7 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('SharePoint Quick Access extension installed.');
   // 设置 7 天定时任务 (7 * 24 * 60 分钟)
   chrome.alarms.create('sync_all_data', { periodInMinutes: 7 * 24 * 60 });
-  // 设置每天 10 点定时同步并生成 PPT 更新提醒
+  // 设置每天 10 点定时同步并生成文件更新提醒
   scheduleNextDailyAlarm();
 
   // 创建右键菜单以支持选中文本在网页中搜索

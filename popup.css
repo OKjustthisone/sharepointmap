@@ -455,8 +455,7 @@ body {
   margin-bottom: 10px;
 }
 
-.section-title-with-icon,
-.update-notifications-title {
+.section-title-with-icon {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1097,7 +1096,7 @@ body {
   border-radius: 2px;
 }
 
-/* PPT 更新会议通知 */
+/* 文件更新提醒 */
 .update-notifications-section {
   padding: 13px;
   border: 1px solid rgba(255, 92, 130, 0.28);
@@ -1250,8 +1249,7 @@ body {
 }
 
 .update-notification-description,
-.update-notification-path,
-.update-notification-config {
+.update-notification-path {
   overflow: hidden;
   color: var(--text-muted);
   font-size: 10px;
@@ -1275,11 +1273,6 @@ body {
   width: 12px;
   height: 12px;
   color: var(--text-muted);
-}
-
-.update-notification-config {
-  margin-top: 2px;
-  color: rgba(0, 240, 255, 0.62);
 }
 
 .update-notification-actions {

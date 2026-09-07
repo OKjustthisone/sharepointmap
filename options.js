@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const configNameInput = document.getElementById('configName');
   const siteUrlInput = document.getElementById('siteUrl');
   const libraryNameInput = document.getElementById('libraryName');
+  const notificationFileTypeInputs = Array.from(
+    document.querySelectorAll('input[name="notificationFileTypes"]')
+  );
   const saveBtn = document.getElementById('saveBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   const statusContainer = document.getElementById('statusContainer');
@@ -19,12 +22,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 1. 初始化并运行配置迁移，然后加载数据
   await migrateConfigsIfNeeded();
   await loadConfigs();
+  setNotificationFileTypes(DEFAULT_NOTIFICATION_FILE_TYPES);
 
   async function loadConfigs() {
     const data = await chrome.storage.local.get(['sp_configs', 'current_config_id']);
     spConfigs = data.sp_configs || [];
     currentConfigId = data.current_config_id || '';
     renderConfigsList();
+  }
+
+  function getNotificationFileTypes() {
+    return notificationFileTypeInputs
+      .filter(input => input.checked)
+      .map(input => input.value);
+  }
+
+  function setNotificationFileTypes(fileTypes) {
+    const selected = new Set(normalizeNotificationFileTypes(fileTypes));
+    notificationFileTypeInputs.forEach(input => {
+      input.checked = selected.has(input.value);
+    });
   }
 
   function renderConfigsList() {
@@ -115,6 +132,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     configNameInput.value = config.name || '';
     siteUrlInput.value = config.siteUrl || '';
     libraryNameInput.value = config.libraryName || 'Shared Documents';
+    setNotificationFileTypes(config.notificationFileTypes);
     saveBtn.innerText = '更新并测试连接';
     cancelBtn.classList.remove('hide');
     statusContainer.classList.add('hide');
@@ -132,6 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     configNameInput.value = '';
     siteUrlInput.value = '';
     libraryNameInput.value = 'Shared Documents';
+    setNotificationFileTypes(DEFAULT_NOTIFICATION_FILE_TYPES);
     saveBtn.innerText = '保存并测试连接';
     cancelBtn.classList.add('hide');
     statusContainer.classList.add('hide');
@@ -172,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const configName = configNameInput.value.trim();
     let siteUrl = siteUrlInput.value.trim();
     const libraryName = libraryNameInput.value.trim();
+    const notificationFileTypes = getNotificationFileTypes();
 
     if (!configName || !siteUrl || !libraryName) {
       showStatus('error', '保存失败', '请完整填写配置别名、SharePoint 站点 URL 和文档库名称。');
@@ -198,7 +218,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // 临时生成一个临时 ID 进行同步测试，防止写入失败导致原有数据丢失
       const targetId = editingConfigId || `config_${Date.now()}`;
-      const tempConfig = { id: targetId, name: configName, siteUrl, libraryName, siteOrigin };
+      const tempConfig = {
+        id: targetId,
+        name: configName,
+        siteUrl,
+        libraryName,
+        siteOrigin,
+        notificationFileTypes
+      };
 
       // 先把临时配置存入 sp_configs 中以供 syncLevel1 读取测试（syncLevel1 中会根据 configId 读取）
       const backupConfigs = [...spConfigs];
