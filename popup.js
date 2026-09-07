@@ -505,7 +505,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const config = getNotificationConfig(notification);
     const siteName = getNotificationSiteName(notification, config);
     const firstLevelDirectory = getNotificationFirstLevelDirectory(notification, config);
-    return `站点：${siteName} / 一级目录：${firstLevelDirectory}`;
+    return `${siteName}/${firstLevelDirectory}`;
   }
 
   function updateNotificationBell(visibleNotifications) {
