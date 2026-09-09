@@ -113,6 +113,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;
   }
+  if (request.action === 'get_sync_logs') {
+    chrome.storage.local.get('sync_logs')
+      .then((data) => sendResponse({ success: true, logs: data.sync_logs || [] }))
+      .catch((err) => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
   if (request.action === 'mark_update_notifications_read') {
     markFileUpdateNotificationsRead(request.ids)
       .then((count) => sendResponse({ success: true, count }))

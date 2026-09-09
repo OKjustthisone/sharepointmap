@@ -25,6 +25,48 @@ const PRESENTATION_FILE_EXTENSIONS = new Set(
 );
 const FILE_UPDATE_NOTIFICATIONS_KEY = 'file_update_notifications';
 const MAX_FILE_UPDATE_NOTIFICATIONS = 100;
+const NOTIFICATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const SYNC_LOGS_KEY = 'sync_logs';
+const MAX_SYNC_LOGS = 500;
+
+function getErrorDetails(error) {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      stack: error.stack || ''
+    };
+  }
+  return {
+    message: String(error),
+    stack: ''
+  };
+}
+
+async function recordSyncLog(level, message, context = {}) {
+  const details = getErrorDetails(message);
+  const entry = {
+    id: `sync_log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    time: new Date().toISOString(),
+    level,
+    message: details.message,
+    stack: details.stack,
+    context
+  };
+
+  try {
+    const data = await chrome.storage.local.get(SYNC_LOGS_KEY);
+    const logs = Array.isArray(data[SYNC_LOGS_KEY]) ? data[SYNC_LOGS_KEY] : [];
+    await chrome.storage.local.set({
+      [SYNC_LOGS_KEY]: [...logs, entry].slice(-MAX_SYNC_LOGS)
+    });
+  } catch (logError) {
+    console.error('[SharePoint Map] Failed to persist sync log:', logError);
+  }
+
+  const consoleMethod = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  consoleMethod('[SharePoint Map]', details.message, context);
+  return entry;
+}
 
 function normalizeNotificationFileTypes(value) {
   const values = Array.isArray(value) ? value : DEFAULT_NOTIFICATION_FILE_TYPES;
@@ -148,16 +190,23 @@ async function updateFileUpdateBadge() {
 
 async function recordFileUpdateNotifications(configId, config, updateEvents) {
   const events = Array.isArray(updateEvents) ? updateEvents.filter(Boolean) : [];
+  const cutoff = Date.now() - NOTIFICATION_RETENTION_MS;
+  const existingData = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const existing = Array.isArray(existingData[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? existingData[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  const recentExisting = existing.filter(item => Number(item?.detectedAt) >= cutoff);
+
+  if (recentExisting.length !== existing.length) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: recentExisting });
+  }
+
   if (events.length === 0) {
     await updateFileUpdateBadge();
     return [];
   }
 
-  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
-  const existing = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
-    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
-    : [];
-  const existingKeys = new Set(existing.map(item => item.dedupeKey).filter(Boolean));
+  const existingKeys = new Set(recentExisting.map(item => item.dedupeKey).filter(Boolean));
   const effectiveConfigId = configId || 'legacy';
   const detectedAt = Date.now();
   const newNotifications = [];
@@ -192,7 +241,7 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
     return [];
   }
 
-  const allNotifications = [...existing, ...newNotifications]
+  const allNotifications = [...recentExisting, ...newNotifications]
     .sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0))
     .slice(0, MAX_FILE_UPDATE_NOTIFICATIONS);
 
@@ -542,6 +591,14 @@ async function syncLevel1(configId) {
 
     return items;
 
+  } catch (err) {
+    await recordSyncLog('error', err, {
+      phase: 'level1-sync',
+      configId: targetConfigId || '',
+      siteUrl,
+      libraryName
+    });
+    throw err;
   } finally {
     await clearDNRRules();
   }
@@ -663,7 +720,6 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     let isFullSync = forceFullSync || lastSyncTime === 0;
 
     let folderTreeCache = {};
-    const MAX_FOLDERS = 500;
     const CONCURRENCY = 6;
 
     const headers = {
@@ -802,7 +858,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
       console.log(`[SharePoint Map] Performing full sync for subtree: ${l1FolderRelativeUrl}`);
       const queue = [l1FolderRelativeUrl];
 
-      while (queue.length > 0 && folderCount < MAX_FOLDERS) {
+      while (queue.length > 0) {
         // 一次性取出 CONCURRENCY 个要处理的路径
         const batch = queue.splice(0, CONCURRENCY);
 
@@ -819,7 +875,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
           try {
             const res = await fetch(folderUrl, { method: 'GET', headers });
             if (!res.ok) {
-              console.error(`Failed to fetch subfolder: ${currentRelativeUrl}, HTTP ${res.status}`);
+              await recordSyncLog('error', `Failed to fetch subfolder: ${currentRelativeUrl}, HTTP ${res.status}`, {
+                phase: 'full-sync',
+                folder: currentRelativeUrl,
+                httpStatus: res.status
+              });
               if (currentRelativeUrl === l1FolderRelativeUrl) {
                 throw new Error(`获取该文件夹的子目录失败 (HTTP ${res.status})。请确保您已登录网页版，且对该文件夹有访问权限。`);
               }
@@ -872,7 +932,10 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
             lastReportedFolder = currentRelativeUrl;
 
           } catch (err) {
-            console.error(`Error requesting folder data for ${currentRelativeUrl}:`, err);
+            await recordSyncLog('error', err, {
+              phase: 'full-sync',
+              folder: currentRelativeUrl
+            });
             if (currentRelativeUrl === l1FolderRelativeUrl) {
               throw err;
             }
@@ -917,7 +980,11 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
             try {
               const res = await fetch(folderUrl, { method: 'GET', headers });
               if (!res.ok) {
-                console.warn(`Failed to fetch modified subfolder: ${folderPath}, HTTP ${res.status}`);
+                await recordSyncLog('warn', `Failed to fetch modified subfolder: ${folderPath}, HTTP ${res.status}`, {
+                  phase: 'incremental-sync',
+                  folder: folderPath,
+                  httpStatus: res.status
+                });
                 // 若该目录已从 SharePoint 移除，忽略即可，垃圾回收会处理它
                 return;
               }
@@ -970,7 +1037,10 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
               lastReportedFolder = folderPath;
 
             } catch (err) {
-              console.error(`Error requesting modified folder data for ${folderPath}:`, err);
+              await recordSyncLog('error', err, {
+                phase: 'incremental-sync',
+                folder: folderPath
+              });
             }
           }));
 
@@ -1078,12 +1148,23 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     }
 
     // 更新总 subtree 缓存
-    await chrome.storage.local.set({
-      [storageKey]: {
-        last_updated: Date.now(),
-        tree: folderTreeCache
-      }
-    });
+    try {
+      await chrome.storage.local.set({
+        [storageKey]: {
+          last_updated: Date.now(),
+          tree: folderTreeCache
+        }
+      });
+    } catch (err) {
+      await recordSyncLog('error', err, {
+        phase: 'save-cache',
+        storageKey,
+        folderCount,
+        nodeCount,
+        errorName: err?.name || ''
+      });
+      throw err;
+    }
 
     if (shouldDetectUpdates && updateEvents.length > 0) {
       await recordFileUpdateNotifications(targetConfigId, targetConfig, updateEvents);
@@ -1092,6 +1173,14 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     }
     return nodeCount;
 
+  } catch (err) {
+    await recordSyncLog('error', err, {
+      phase: 'subtree-sync',
+      folder: l1FolderRelativeUrl,
+      folderCount,
+      nodeCount
+    });
+    throw err;
   } finally {
     isSyncActive = false;
     clearInterval(progressTimer);
@@ -1141,7 +1230,11 @@ async function performAllSync(options = {}) {
             }
           }
         } catch (configErr) {
-          console.error(`Failed to sync config ${config.name} (${config.id}):`, configErr);
+          await recordSyncLog('error', configErr, {
+            phase: 'all-sync-config',
+            configId: config.id,
+            configName: config.name
+          });
         }
       }
     } else {
@@ -1170,7 +1263,9 @@ async function performAllSync(options = {}) {
     }
     console.log('All scheduled sync completed successfully.');
   } catch (error) {
-    console.error('Scheduled sync failed:', error);
+    await recordSyncLog('error', error, {
+      phase: 'scheduled-sync'
+    });
   }
 }
 

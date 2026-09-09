@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let syncStatus = {};
   let updateNotifications = [];
   let isNotificationsPanelOpen = false;
+  let activeNotificationL1Path = 'all';
 
   function svgIcon(name, className = '') {
     const extraClass = className ? ` ${className}` : '';
@@ -73,6 +74,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     isNotificationsPanelOpen = !isNotificationsPanelOpen;
+    renderUpdateNotifications();
+  });
+
+  document.getElementById('notificationL1Filter')?.addEventListener('change', (event) => {
+    activeNotificationL1Path = event.target.value;
     renderUpdateNotifications();
   });
 
@@ -112,10 +118,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
         console.error('Background sync level 1 failed:', chrome.runtime.lastError);
-        showToast('同步 1 级目录异常: ' + chrome.runtime.lastError.message, 'alert');
+        showToast('同步 1 级目录异常: ' + chrome.runtime.lastError.message, 'alert', true);
       } else if (response && !response.success) {
         console.error('Background sync level 1 returned error:', response.error);
-        showToast(`同步 1 级目录失败: ${response.error}`, 'alert');
+        showToast(`同步 1 级目录失败: ${response.error}`, 'alert', true);
       } else {
         showToast('1 级目录同步完成！', 'check');
       }
@@ -228,9 +234,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       l1Cache = data.l1_cache;
     }
 
-    syncStatus = await loadSyncStatusFromStorage();
-    subtreeCache = await loadSubtreeCacheFromStorage();
+    syncStatus = await loadSyncStatusFromStorage(favorites);
+    subtreeCache = await loadSubtreeCacheFromStorage(favorites);
     await loadUpdateNotificationsFromStorage();
+    populateNotificationL1Filter();
     
     // 渲染切换 Tab 栏
     renderTabs();
@@ -358,6 +365,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         expandedState = {};
         isTreeExpanded = false;
         isNotificationsPanelOpen = false;
+        activeNotificationL1Path = 'all';
         
         // 重新初始化并加载新站点的数据
         await initApp();
@@ -367,8 +375,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 辅助函数：从本地存储中聚合所有一级目录的子树缓存
-  async function loadSubtreeCacheFromStorage() {
-    const allData = await chrome.storage.local.get(null);
+  async function loadSubtreeCacheFromStorage(favoriteItems = []) {
+    const l1FolderIds = new Set(
+      favoriteItems
+        .filter(item => item.type === 'folder' && item.level === 1)
+        .map(item => item.id)
+    );
+    if (l1FolderIds.size === 0) return {};
+
+    const cacheKeys = Array.from(l1FolderIds, id => `subtree_cache_${id}`);
+    const allData = await chrome.storage.local.get(cacheKeys);
     const subtreeCache = {};
     Object.keys(allData).forEach(key => {
       if (key.startsWith('subtree_cache_')) {
@@ -380,8 +396,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 辅助函数：从本地存储中聚合所有一级目录的同步状态
-  async function loadSyncStatusFromStorage() {
-    const allData = await chrome.storage.local.get(null);
+  async function loadSyncStatusFromStorage(favoriteItems = []) {
+    const folderIds = favoriteItems
+      .filter(item => item.type === 'folder' && item.level === 1)
+      .map(item => item.id);
+    if (folderIds.length === 0) return {};
+
+    const statusKeys = folderIds.map(id => `sync_status_${id}`);
+    const allData = await chrome.storage.local.get(statusKeys);
     const syncStatus = {};
     Object.keys(allData).forEach(key => {
       if (key.startsWith('sync_status_')) {
@@ -394,16 +416,55 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadUpdateNotificationsFromStorage() {
     const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
-    updateNotifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
-      ? data[FILE_UPDATE_NOTIFICATIONS_KEY].sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0))
+    const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+      ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
       : [];
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    updateNotifications = notifications
+      .filter(item => Number(item?.detectedAt) >= cutoff)
+      .sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0));
+
+    if (updateNotifications.length !== notifications.length) {
+      await chrome.storage.local.set({ file_update_notifications: updateNotifications });
+    }
   }
 
   function getVisibleUpdateNotifications() {
-    if (!currentConfigId && !spConfig) return updateNotifications;
-
     const configId = currentConfigId || 'legacy';
-    return updateNotifications.filter(item => item.configId === configId);
+    return updateNotifications.filter(item => {
+      if ((currentConfigId || spConfig) && item.configId !== configId) return false;
+      if (activeNotificationL1Path === 'all') return true;
+      return getNotificationFirstLevelDirectory(item, getNotificationConfig(item)) === activeNotificationL1Path;
+    });
+  }
+
+  function populateNotificationL1Filter() {
+    const select = document.getElementById('notificationL1Filter');
+    if (!select) return;
+
+    const notifications = updateNotifications.filter(item => {
+      const configId = currentConfigId || 'legacy';
+      return (!(currentConfigId || spConfig) || item.configId === configId);
+    });
+    const names = new Map();
+    notifications.forEach(item => {
+      const config = getNotificationConfig(item);
+      const name = getNotificationFirstLevelDirectory(item, config);
+      names.set(name, name);
+    });
+
+    select.innerHTML = '<option value="all">所有一级目录</option>';
+    Array.from(names.values())
+      .sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }))
+      .forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+      });
+
+    if (!names.has(activeNotificationL1Path)) activeNotificationL1Path = 'all';
+    select.value = activeNotificationL1Path;
   }
 
   function formatUpdateNotificationTime(notification) {
@@ -667,9 +728,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       l1Cache = data.l1_cache;
     }
 
-    syncStatus = await loadSyncStatusFromStorage();
-    subtreeCache = await loadSubtreeCacheFromStorage();
+    syncStatus = await loadSyncStatusFromStorage(favorites);
+    subtreeCache = await loadSubtreeCacheFromStorage(favorites);
     await loadUpdateNotificationsFromStorage();
+    populateNotificationL1Filter();
     
     renderTabs();
     updateSyncTimeDisplay();
@@ -833,10 +895,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncBtn.classList.remove('loading');
             if (chrome.runtime.lastError) {
               console.error('Background sync subtree failed:', chrome.runtime.lastError);
-              showToast('同步子目录异常: ' + chrome.runtime.lastError.message, 'alert');
+              showToast('同步子目录异常: ' + chrome.runtime.lastError.message, 'alert', true);
             } else if (response && !response.success) {
               console.error('Background sync subtree returned error:', response.error);
-              showToast(`同步子目录失败: ${response.error}`, 'alert');
+              showToast(`同步子目录失败: ${response.error}`, 'alert', true);
             } else {
               showToast(`目录 [${item.name}] 同步完成！`, 'check');
             }
@@ -1216,10 +1278,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, (response) => {
       if (chrome.runtime.lastError) {
         console.error('Background sync trigger error:', chrome.runtime.lastError);
-        showToast('触发后台同步失败', 'alert');
+        showToast('触发后台同步失败', 'alert', true);
       } else if (response && !response.success) {
         console.error('Background sync failed:', response.error);
-        showToast(`同步失败: ${response.error}`, 'alert');
+        showToast(`同步失败: ${response.error}`, 'alert', true);
       } else {
         showToast('子树目录同步完成！已完全缓存。', 'check');
       }
@@ -1341,9 +1403,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ==================== 提示条与 Toast 通用组件 ====================
 
-  function showToast(message, iconName = '') {
+  function showToast(message, iconName = '', isError = false) {
     const toast = document.createElement('div');
     toast.className = 'toast';
+    if (isError) toast.classList.add('toast-error');
 
     if (iconName) {
       const icon = document.createElement('span');
@@ -1355,13 +1418,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     const text = document.createElement('span');
     text.innerText = message;
     toast.appendChild(text);
+
+    if (isError) {
+      const copyButton = document.createElement('button');
+      copyButton.className = 'toast-copy-btn';
+      copyButton.type = 'button';
+      copyButton.textContent = '复制错误';
+      copyButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(message);
+          copyButton.textContent = '已复制';
+        } catch (err) {
+          copyButton.textContent = '复制失败';
+        }
+      });
+      toast.appendChild(copyButton);
+    }
     
     toastContainer.appendChild(toast);
     
     // 动画结束后自动移除 DOM
     setTimeout(() => {
       toast.remove();
-    }, 2500);
+    }, isError ? 30000 : 2500);
   }
 
   function showAlert(msg, iconName = '') {
