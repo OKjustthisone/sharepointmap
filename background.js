@@ -4,6 +4,8 @@ importScripts('sync-helper.js');
 
 const DAILY_UPDATE_ALARM_NAME = 'daily_update_alarm';
 const LEGACY_WEEKDAY_ALARM_NAME = 'weekday_sync_alarm';
+const LEGACY_WEEKLY_ALARM_NAME = 'sync_all_data';
+const DAILY_SYNC_HOURS = [9, 13];
 
 // 启动时清除任何遗留的正在同步状态，防止 Service Worker 重启或崩溃后状态卡在“同步中”
 chrome.storage.local.get(null, (allData) => {
@@ -20,31 +22,69 @@ updateFileUpdateBadge().catch(err => {
   console.warn('[SharePoint Map] Failed to initialize notification badge:', err);
 });
 
-// 计算下一个本地时间每天 10:00 的时间戳。
-function getNextDaily10AM(now) {
+// 计算下一个本地时间 09:00 或 13:00 的时间戳。
+function getNextDailySyncTime(now) {
   const date = new Date(now);
-  date.setHours(10, 0, 0, 0);
+  const todayCandidates = DAILY_SYNC_HOURS.map(hour => {
+    const candidate = new Date(date);
+    candidate.setHours(hour, 0, 0, 0);
+    return candidate.getTime();
+  }).filter(timestamp => timestamp > now);
 
-  // 如果当前时间已经到或超过今天的 10 点，则移到明天。
-  if (date.getTime() <= now) {
-    date.setDate(date.getDate() + 1);
+  if (todayCandidates.length > 0) {
+    return Math.min(...todayCandidates);
   }
 
+  date.setDate(date.getDate() + 1);
+  date.setHours(DAILY_SYNC_HOURS[0], 0, 0, 0);
   return date.getTime();
 }
 
 function scheduleNextDailyAlarm() {
-  const nextTime = getNextDaily10AM(Date.now());
+  const nextTime = getNextDailySyncTime(Date.now());
   chrome.alarms.create(DAILY_UPDATE_ALARM_NAME, { when: nextTime });
-  console.log('Scheduled next daily 10 AM update for:', new Date(nextTime).toString());
+  console.log('Scheduled next daily sync for:', new Date(nextTime).toString());
 }
 
-// 检查并确保每天 10 点的 Alarm 已设置。
+function getAutomaticSyncWindow(scheduledTime) {
+  const scheduledDate = new Date(scheduledTime);
+  const syncHour = scheduledDate.getHours() === 9 ? 9 : 13;
+  const end = new Date(scheduledDate);
+  end.setHours(syncHour, 0, 0, 0);
+
+  const start = new Date(end);
+  if (syncHour === 9) {
+    start.setDate(start.getDate() - 1);
+    start.setHours(13, 0, 0, 0);
+  } else {
+    start.setHours(9, 0, 0, 0);
+  }
+
+  return {
+    modifiedAfter: start.getTime(),
+    modifiedBefore: end.getTime(),
+    checkpointTime: end.getTime(),
+    label: `${syncHour}:00`
+  };
+}
+
+function isSupportedDailySyncAlarm(alarm) {
+  if (!alarm || !Number.isFinite(alarm.scheduledTime)) return false;
+  return DAILY_SYNC_HOURS.includes(new Date(alarm.scheduledTime).getHours());
+}
+
+// 检查并确保每天 09:00/13:00 的 Alarm 已设置。
 chrome.alarms.get(DAILY_UPDATE_ALARM_NAME, (alarm) => {
-  if (!alarm) {
+  if (!isSupportedDailySyncAlarm(alarm)) {
+    if (alarm) {
+      chrome.alarms.clear(DAILY_UPDATE_ALARM_NAME, () => {
+        scheduleNextDailyAlarm();
+      });
+      return;
+    }
     scheduleNextDailyAlarm();
   } else {
-    console.log('Daily 10 AM update alarm already scheduled for:', new Date(alarm.scheduledTime).toString());
+    console.log('Daily sync alarm already scheduled for:', new Date(alarm.scheduledTime).toString());
   }
 });
 
@@ -55,12 +95,17 @@ chrome.alarms.get(LEGACY_WEEKDAY_ALARM_NAME, (alarm) => {
   }
 });
 
+// 清理旧版本每周全量同步 Alarm，避免绕过新的时间窗口逻辑。
+chrome.alarms.get(LEGACY_WEEKLY_ALARM_NAME, (alarm) => {
+  if (alarm) {
+    chrome.alarms.clear(LEGACY_WEEKLY_ALARM_NAME);
+  }
+});
+
 // 监听安装事件，设置定时任务与右键菜单
 chrome.runtime.onInstalled.addListener(() => {
   console.log('SharePoint Quick Access extension installed.');
-  // 设置 7 天定时任务 (7 * 24 * 60 分钟)
-  chrome.alarms.create('sync_all_data', { periodInMinutes: 7 * 24 * 60 });
-  // 设置每天 10 点定时同步并生成文件更新提醒
+  // 设置每天 09:00/13:00 定时同步并生成文件更新提醒
   scheduleNextDailyAlarm();
 
   // 创建右键菜单以支持选中文本在网页中搜索
@@ -73,29 +118,37 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // 监听 Alarm 触发
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === DAILY_UPDATE_ALARM_NAME || alarm.name === LEGACY_WEEKDAY_ALARM_NAME) {
-    console.log('Daily 10 AM sync alarm triggered. Syncing favorited directories and checking PPT updates...');
-    performAllSync({ notifyUpdates: true })
+  if (alarm.name === DAILY_UPDATE_ALARM_NAME) {
+    const syncWindow = getAutomaticSyncWindow(alarm.scheduledTime || Date.now());
+    console.log(`Daily ${syncWindow.label} sync alarm triggered. Syncing favorited directories and checking configured file updates from ${new Date(syncWindow.modifiedAfter).toISOString()} to ${new Date(syncWindow.modifiedBefore).toISOString()}...`);
+    performAllSync({
+      mode: 'automatic',
+      notifyUpdates: true,
+      modifiedAfter: syncWindow.modifiedAfter,
+      modifiedBefore: syncWindow.modifiedBefore,
+      overlapMs: 0,
+      automaticCheckpointTime: syncWindow.checkpointTime
+    })
       .then(() => {
-        console.log('Daily 10 AM sync and PPT update check completed successfully.');
+        console.log(`Daily ${syncWindow.label} sync and update check completed successfully.`);
       })
       .catch((err) => {
-        console.error('Daily 10 AM sync failed:', err);
+        console.error(`Daily ${syncWindow.label} sync failed:`, err);
       })
       .finally(() => {
         // 无论成功还是失败，都安排下一次的每日同步。
         scheduleNextDailyAlarm();
       });
-  } else if (alarm.name === 'sync_all_data') {
-    console.log('Scheduled alarm triggered. Syncing all SharePoint data...');
-    performAllSync({ notifyUpdates: false });
+  } else if (alarm.name === LEGACY_WEEKLY_ALARM_NAME) {
+    // 兼容已存在的旧 Alarm：启动时会清理，这里不再执行旧的同步逻辑。
+    chrome.alarms.clear(LEGACY_WEEKLY_ALARM_NAME);
   }
 });
 
 // 消息监听保留，以备将来需要
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync_all') {
-    performAllSync()
+    performAllSync({ mode: 'manual', configId: request.configId || '' })
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true; // 异步通道
@@ -108,7 +161,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'sync_subtree') {
     const { folderId, relativeUrl } = request;
-    syncSubtree(folderId, relativeUrl)
+    syncSubtree(folderId, relativeUrl, { mode: 'manual', notifyUpdates: false })
       .then((nodeCount) => sendResponse({ success: true, count: nodeCount }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;

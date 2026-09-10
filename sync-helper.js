@@ -68,6 +68,35 @@ async function recordSyncLog(level, message, context = {}) {
   return entry;
 }
 
+const INCREMENTAL_SYNC_OVERLAP_MS = 5 * 60 * 1000;
+const AUTOMATIC_SYNC_CHECKPOINTS_KEY = 'automatic_sync_checkpoints';
+
+function parseSyncTimestamp(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  return null;
+}
+
+async function getAutomaticSyncCheckpoint(configId) {
+  const data = await chrome.storage.local.get(AUTOMATIC_SYNC_CHECKPOINTS_KEY);
+  const checkpoints = data[AUTOMATIC_SYNC_CHECKPOINTS_KEY];
+  if (!checkpoints || typeof checkpoints !== 'object') return null;
+
+  return parseSyncTimestamp(checkpoints[configId || 'legacy']);
+}
+
 function normalizeNotificationFileTypes(value) {
   const values = Array.isArray(value) ? value : DEFAULT_NOTIFICATION_FILE_TYPES;
   const selected = new Set(
@@ -656,6 +685,20 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     throw new Error('站点配置或文档库名称丢失，无法抓取子树');
   }
 
+  let modifiedAfter = parseSyncTimestamp(syncOptions.modifiedAfter);
+  let modifiedBefore = parseSyncTimestamp(syncOptions.modifiedBefore);
+  if (syncOptions.mode === 'manual' && modifiedAfter === null) {
+    const automaticCheckpoint = await getAutomaticSyncCheckpoint(targetConfigId);
+    if (automaticCheckpoint !== null) {
+      modifiedAfter = automaticCheckpoint;
+      if (modifiedBefore === null) modifiedBefore = Date.now();
+    }
+  }
+  const configuredOverlapMs = Number(syncOptions.overlapMs);
+  const overlapMs = syncOptions.overlapMs === undefined
+    ? INCREMENTAL_SYNC_OVERLAP_MS
+    : Math.max(0, Number.isFinite(configuredOverlapMs) ? configuredOverlapMs : 0);
+
   const baseUrl = siteUrl.split('/sites/')[0];
 
   let folderCount = 0;
@@ -714,6 +757,9 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     const oldItemsById = getCachedItemsById(oldTree);
     const shouldDetectUpdates = syncOptions.notifyUpdates === true;
     let updateEvents = [];
+    const hasExplicitModifiedWindow = modifiedAfter !== null || modifiedBefore !== null;
+    const baseIncrementalStartTime = modifiedAfter !== null ? modifiedAfter : lastSyncTime;
+    const incrementalSyncStartTime = Math.max(0, baseIncrementalStartTime - overlapMs);
 
     // 如果没有历史缓存，或者缓存的根目录路径与当前路径不符，强制进行首次全量同步
     const forceFullSync = !oldTree || !cachedData || !oldTree[l1FolderRelativeUrl];
@@ -730,7 +776,8 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     let changedFolders = new Set();
 
     if (!isFullSync) {
-      console.log(`[SharePoint Map] Performing incremental sync for subtree: ${l1FolderRelativeUrl} since ${new Date(lastSyncTime).toISOString()}`);
+      const endTimeLog = modifiedBefore === null ? '' : ` to ${new Date(modifiedBefore).toISOString()}`;
+      console.log(`[SharePoint Map] Performing incremental sync for subtree: ${l1FolderRelativeUrl} since ${new Date(incrementalSyncStartTime).toISOString()}${endTimeLog} (checkpoint: ${new Date(lastSyncTime).toISOString()}, overlap: ${overlapMs / 60000} minutes)`);
       
       // 先把旧的缓存树完全复制过来，后续对其进行局部修改和垃圾回收
       folderTreeCache = { ...oldTree };
@@ -751,9 +798,13 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
         }
       });
 
-      // 查询在此时间之后修改过的所有文件和文件夹
-      const isoString = new Date(lastSyncTime).toISOString();
-      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=Modified gt datetime'${isoString}'&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified&$top=5000`;
+      // 查询指定时间窗口内修改过的所有文件和文件夹
+      const isoString = new Date(incrementalSyncStartTime).toISOString();
+      const modifiedFilters = [`Modified gt datetime'${isoString}'`];
+      if (modifiedBefore !== null) {
+        modifiedFilters.push(`Modified le datetime'${new Date(modifiedBefore).toISOString()}'`);
+      }
+      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=${modifiedFilters.join(' and ')}&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified&$top=5000`;
 
       try {
         const res = await fetch(modifiedItemsUrl, { method: 'GET', headers });
@@ -1074,20 +1125,29 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
       }
     }
 
-    // 全量同步时用同步前快照比较新增/修改的 PPT。首次建立缓存只做基线，不生成提醒。
+    // 全量同步时用同步前快照比较指定时间窗口内新增/修改的文件。首次建立缓存只做基线，不生成提醒。
     if (shouldDetectUpdates && isFullSync && hasPreviousSnapshot) {
       const newItemsById = getCachedItemsById(folderTreeCache);
       newItemsById.forEach(currentItem => {
         if (currentItem.type !== 'file' || !isNotificationFileName(currentItem.name, targetConfig)) return;
 
         const previousItem = oldItemsById.get(currentItem.id);
+        const currentModifiedMs = Date.parse(currentItem.modifiedAt || '');
+        if (
+          hasExplicitModifiedWindow &&
+          (!Number.isFinite(currentModifiedMs) ||
+            currentModifiedMs <= incrementalSyncStartTime ||
+            (modifiedBefore !== null && currentModifiedMs > modifiedBefore))
+        ) {
+          return;
+        }
+
         if (!previousItem) {
           const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded', targetConfig);
           if (uploadEvent) updateEvents.push(uploadEvent);
           return;
         }
 
-        const currentModifiedMs = Date.parse(currentItem.modifiedAt || '');
         const previousModifiedMs = Date.parse(previousItem.modifiedAt || '');
         if (
           Number.isFinite(currentModifiedMs) &&
@@ -1195,16 +1255,63 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
   }
 }
 
-// 3. 后台定时器全量重新同步主函数
+// 3. 同步所有配置下的 1 级目录与已收藏子树
 async function performAllSync(options = {}) {
   const notifyUpdates = options.notifyUpdates === true;
+  const syncMode = options.mode || 'manual';
+  const requestedConfigId = options.configId || '';
+  const configuredModifiedAfter = parseSyncTimestamp(options.modifiedAfter);
+  const configuredModifiedBefore = parseSyncTimestamp(options.modifiedBefore);
+  const configuredCheckpointTime = parseSyncTimestamp(
+    options.automaticCheckpointTime || configuredModifiedBefore
+  );
+  const configuredOverlapMs = Number(options.overlapMs);
+  const overlapMs = options.overlapMs === undefined
+    ? (syncMode === 'manual' ? INCREMENTAL_SYNC_OVERLAP_MS : 0)
+    : Math.max(0, Number.isFinite(configuredOverlapMs) ? configuredOverlapMs : 0);
+  const manualSyncEndTime = configuredModifiedBefore || Date.now();
+
   try {
     await migrateConfigsIfNeeded();
-    const { sp_configs } = await chrome.storage.local.get('sp_configs');
+    const configData = await chrome.storage.local.get([
+      'sp_configs',
+      AUTOMATIC_SYNC_CHECKPOINTS_KEY
+    ]);
+    const automaticCheckpoints = configData[AUTOMATIC_SYNC_CHECKPOINTS_KEY]
+      && typeof configData[AUTOMATIC_SYNC_CHECKPOINTS_KEY] === 'object'
+      ? { ...configData[AUTOMATIC_SYNC_CHECKPOINTS_KEY] }
+      : {};
+
+    const buildSubtreeSyncOptions = (configId) => {
+      let modifiedAfter = configuredModifiedAfter;
+      let modifiedBefore = configuredModifiedBefore;
+
+      if (syncMode === 'manual' && modifiedAfter === null) {
+        modifiedAfter = parseSyncTimestamp(automaticCheckpoints[configId || 'legacy']);
+        if (modifiedAfter !== null && modifiedBefore === null) {
+          modifiedBefore = manualSyncEndTime;
+        }
+      }
+
+      const syncOptions = {
+        mode: syncMode,
+        notifyUpdates,
+        overlapMs
+      };
+      if (modifiedAfter !== null) syncOptions.modifiedAfter = modifiedAfter;
+      if (modifiedBefore !== null) syncOptions.modifiedBefore = modifiedBefore;
+      return syncOptions;
+    };
+
+    const spConfigs = Array.isArray(configData.sp_configs) ? configData.sp_configs : [];
+    const configsToSync = requestedConfigId
+      ? spConfigs.filter(config => config.id === requestedConfigId)
+      : spConfigs;
     
-    if (sp_configs && Array.isArray(sp_configs) && sp_configs.length > 0) {
-      console.log(`[SharePoint Map] performAllSync: starting sync for ${sp_configs.length} configurations...`);
-      for (const config of sp_configs) {
+    if (configsToSync.length > 0) {
+      console.log(`[SharePoint Map] performAllSync: starting ${syncMode} sync for ${configsToSync.length} configurations...`);
+      for (const config of configsToSync) {
+        let configSyncFailed = false;
         try {
           console.log(`[SharePoint Map] Syncing config "${config.name}" (${config.id})...`);
           
@@ -1222,12 +1329,29 @@ async function performAllSync(options = {}) {
               const matchingL1 = l1Items.find(item => item.id === favFolder.id);
               if (matchingL1) {
                 try {
-                  await syncSubtree(favFolder.id, matchingL1.relativeUrl, { notifyUpdates });
+                  await syncSubtree(
+                    favFolder.id,
+                    matchingL1.relativeUrl,
+                    buildSubtreeSyncOptions(config.id)
+                  );
                 } catch (err) {
+                  configSyncFailed = true;
                   console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
                 }
               }
             }
+          }
+
+          if (
+            syncMode === 'automatic' &&
+            !configSyncFailed &&
+            configuredCheckpointTime !== null
+          ) {
+            automaticCheckpoints[config.id] = configuredCheckpointTime;
+            await chrome.storage.local.set({
+              [AUTOMATIC_SYNC_CHECKPOINTS_KEY]: automaticCheckpoints
+            });
+            console.log(`[SharePoint Map] Recorded automatic sync checkpoint for "${config.name}": ${new Date(configuredCheckpointTime).toISOString()}`);
           }
         } catch (configErr) {
           await recordSyncLog('error', configErr, {
@@ -1247,21 +1371,39 @@ async function performAllSync(options = {}) {
       console.log('Syncing Level 1...');
       const l1Items = await syncLevel1();
       const { favorites } = await chrome.storage.local.get('favorites');
+      let legacySyncFailed = false;
       if (favorites && Array.isArray(favorites)) {
         const l1Folders = favorites.filter(fav => fav.level === 1 && fav.type === 'folder');
         for (const favFolder of l1Folders) {
           const matchingL1 = l1Items.find(item => item.id === favFolder.id);
           if (matchingL1) {
             try {
-              await syncSubtree(favFolder.id, matchingL1.relativeUrl, { notifyUpdates });
+              await syncSubtree(
+                favFolder.id,
+                matchingL1.relativeUrl,
+                buildSubtreeSyncOptions('legacy')
+              );
             } catch (err) {
+              legacySyncFailed = true;
               console.error(`Failed to sync subtree for folder ${favFolder.name}:`, err);
             }
           }
         }
       }
+
+      if (
+        syncMode === 'automatic' &&
+        !legacySyncFailed &&
+        configuredCheckpointTime !== null
+      ) {
+        automaticCheckpoints.legacy = configuredCheckpointTime;
+        await chrome.storage.local.set({
+          [AUTOMATIC_SYNC_CHECKPOINTS_KEY]: automaticCheckpoints
+        });
+        console.log(`[SharePoint Map] Recorded automatic sync checkpoint: ${new Date(configuredCheckpointTime).toISOString()}`);
+      }
     }
-    console.log('All scheduled sync completed successfully.');
+    console.log(`All ${syncMode} sync completed successfully.`);
   } catch (error) {
     await recordSyncLog('error', error, {
       phase: 'scheduled-sync'

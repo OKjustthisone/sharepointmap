@@ -109,21 +109,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateDirectoryToggleIndicator(isTreeExpanded);
   });
   
-  // 手动同步 1 级目录事件
+  // 手动同步当前配置的 1 级目录及已收藏子树
   syncL1Btn.addEventListener('click', (e) => {
     e.stopPropagation();
     syncL1Btn.classList.add('loading');
-    showToast('已在后台启动 1 级目录同步...', 'sync');
-    chrome.runtime.sendMessage({ action: 'sync_level1', configId: currentConfigId }, (response) => {
+    showToast('已在后台启动收藏目录同步...', 'sync');
+    chrome.runtime.sendMessage({ action: 'sync_all', configId: currentConfigId }, (response) => {
       syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
-        console.error('Background sync level 1 failed:', chrome.runtime.lastError);
-        showToast('同步 1 级目录异常: ' + chrome.runtime.lastError.message, 'alert', true);
+        console.error('Background manual sync failed:', chrome.runtime.lastError);
+        showToast('手动同步异常: ' + chrome.runtime.lastError.message, 'alert', true);
       } else if (response && !response.success) {
-        console.error('Background sync level 1 returned error:', response.error);
-        showToast(`同步 1 级目录失败: ${response.error}`, 'alert', true);
+        console.error('Background manual sync returned error:', response.error);
+        showToast(`手动同步失败: ${response.error}`, 'alert', true);
       } else {
-        showToast('1 级目录同步完成！', 'check');
+        showToast('收藏目录同步完成！', 'check');
       }
     });
   });
