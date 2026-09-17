@@ -753,6 +753,16 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     const cachedData = storageData[storageKey];
     const oldTree = cachedData?.tree;
     const lastSyncTime = cachedData?.last_updated || 0;
+    if (
+      syncOptions.mode === 'automatic' &&
+      syncOptions.compensateMissedWindows === true &&
+      modifiedAfter !== null &&
+      lastSyncTime > 0 &&
+      lastSyncTime < modifiedAfter
+    ) {
+      console.log(`[SharePoint Map] Automatic sync compensation: extending query start from ${new Date(modifiedAfter).toISOString()} to cached sync time ${new Date(lastSyncTime).toISOString()}.`);
+      modifiedAfter = lastSyncTime;
+    }
     const hasPreviousSnapshot = Boolean(cachedData && cachedData.tree);
     const oldItemsById = getCachedItemsById(oldTree);
     const shouldDetectUpdates = syncOptions.notifyUpdates === true;
@@ -1285,6 +1295,14 @@ async function performAllSync(options = {}) {
     const buildSubtreeSyncOptions = (configId) => {
       let modifiedAfter = configuredModifiedAfter;
       let modifiedBefore = configuredModifiedBefore;
+      const automaticCheckpoint = parseSyncTimestamp(automaticCheckpoints[configId || 'legacy']);
+
+      if (syncMode === 'automatic' && modifiedAfter !== null && automaticCheckpoint !== null) {
+        if (automaticCheckpoint < modifiedAfter) {
+          console.log(`[SharePoint Map] Automatic sync compensation for ${configId || 'legacy'}: extending query start from ${new Date(modifiedAfter).toISOString()} to ${new Date(automaticCheckpoint).toISOString()}.`);
+        }
+        modifiedAfter = Math.min(modifiedAfter, automaticCheckpoint);
+      }
 
       if (syncMode === 'manual' && modifiedAfter === null) {
         modifiedAfter = parseSyncTimestamp(automaticCheckpoints[configId || 'legacy']);
@@ -1296,7 +1314,8 @@ async function performAllSync(options = {}) {
       const syncOptions = {
         mode: syncMode,
         notifyUpdates,
-        overlapMs
+        overlapMs,
+        compensateMissedWindows: syncMode === 'automatic'
       };
       if (modifiedAfter !== null) syncOptions.modifiedAfter = modifiedAfter;
       if (modifiedBefore !== null) syncOptions.modifiedBefore = modifiedBefore;

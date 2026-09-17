@@ -70,7 +70,8 @@ function getAutomaticSyncWindow(scheduledTime) {
 
 function isSupportedDailySyncAlarm(alarm) {
   if (!alarm || !Number.isFinite(alarm.scheduledTime)) return false;
-  return DAILY_SYNC_HOURS.includes(new Date(alarm.scheduledTime).getHours());
+  return DAILY_SYNC_HOURS.includes(new Date(alarm.scheduledTime).getHours())
+    && alarm.scheduledTime > Date.now();
 }
 
 // 检查并确保每天 09:00/13:00 的 Alarm 已设置。
@@ -148,7 +149,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // 消息监听保留，以备将来需要
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync_all') {
-    performAllSync({ mode: 'manual', configId: request.configId || '' })
+    performAllSync({ mode: 'manual', notifyUpdates: true, configId: request.configId || '' })
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true; // 异步通道
@@ -161,7 +162,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'sync_subtree') {
     const { folderId, relativeUrl } = request;
-    syncSubtree(folderId, relativeUrl, { mode: 'manual', notifyUpdates: false })
+    syncSubtree(folderId, relativeUrl, { mode: 'manual', notifyUpdates: true })
       .then((nodeCount) => sendResponse({ success: true, count: nodeCount }))
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;

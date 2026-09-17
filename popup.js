@@ -123,7 +123,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Background manual sync returned error:', response.error);
         showToast(`手动同步失败: ${response.error}`, 'alert', true);
       } else {
-        showToast('收藏目录同步完成！', 'check');
+        showToast('收藏目录同步完成，更新提醒已生成（如有）！', 'check');
       }
     });
   });
@@ -1283,7 +1283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Background sync failed:', response.error);
         showToast(`同步失败: ${response.error}`, 'alert', true);
       } else {
-        showToast('子树目录同步完成！已完全缓存。', 'check');
+        showToast('子树目录同步完成，更新提醒已生成（如有）！', 'check');
       }
     });
   }
