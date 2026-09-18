@@ -71,8 +71,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   notificationsBtn.addEventListener('click', () => {
-    const visibleNotifications = getVisibleUpdateNotifications();
-    if (visibleNotifications.length === 0) {
+    const availableNotifications = getCurrentConfigUpdateNotifications();
+    if (availableNotifications.length === 0) {
       showToast('暂无文件更新提醒', 'bell');
       return;
     }
@@ -447,10 +447,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  function getVisibleUpdateNotifications() {
+  function getCurrentConfigUpdateNotifications() {
     const configId = currentConfigId || 'legacy';
-    return updateNotifications.filter(item => {
-      if ((currentConfigId || spConfig) && item.configId !== configId) return false;
+    return updateNotifications.filter(item => (
+      !(currentConfigId || spConfig) || item.configId === configId
+    ));
+  }
+
+  function getVisibleUpdateNotifications() {
+    return getCurrentConfigUpdateNotifications().filter(item => {
       if (activeNotificationL1Path !== 'all'
         && getNotificationFirstLevelDirectory(item, getNotificationConfig(item)) !== activeNotificationL1Path) {
         return false;
@@ -649,15 +654,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!updateNotificationsSection || !updateNotificationsList) return;
 
     const visibleNotifications = getVisibleUpdateNotifications();
-    updateNotificationBell(visibleNotifications);
+    updateNotificationBell(getCurrentConfigUpdateNotifications());
     updateNotificationsList.innerHTML = '';
-
-    if (visibleNotifications.length === 0) {
-      updateNotificationCount.innerText = '';
-      markNotificationsReadBtn.disabled = true;
-      updateNotificationsSection.classList.add('hide');
-      return;
-    }
 
     if (!isNotificationsPanelOpen) {
       updateNotificationsSection.classList.add('hide');
@@ -665,6 +663,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     updateNotificationsSection.classList.remove('hide');
+
+    if (visibleNotifications.length === 0) {
+      updateNotificationCount.innerText = '0 条匹配';
+      markNotificationsReadBtn.disabled = true;
+
+      const emptyState = document.createElement('div');
+      emptyState.className = 'update-notifications-empty';
+      emptyState.innerText = '当前筛选暂无文件更新，可切换筛选条件';
+      updateNotificationsList.appendChild(emptyState);
+      return;
+    }
+
     const unreadCount = visibleNotifications.filter(item => !item.read).length;
     updateNotificationCount.innerText = unreadCount > 0
       ? `${unreadCount} 条待查看`

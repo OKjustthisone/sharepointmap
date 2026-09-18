@@ -1241,6 +1241,15 @@ body {
   gap: 7px;
 }
 
+.update-notifications-empty {
+  padding: 16px 10px;
+  border: 1px dashed rgba(255, 145, 169, 0.24);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 .update-notification-card {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
