@@ -1156,6 +1156,8 @@ body {
 .update-notifications-header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
 }
@@ -1166,7 +1168,8 @@ body {
   white-space: nowrap;
 }
 
-.notification-l1-filter {
+.notification-l1-filter,
+.notification-file-type-filter {
   max-width: 125px;
   padding: 4px 6px;
   border: 1px solid rgba(255, 145, 169, 0.28);
@@ -1176,7 +1179,12 @@ body {
   font-size: 10px;
 }
 
-.notification-l1-filter:focus {
+.notification-file-type-filter {
+  max-width: 115px;
+}
+
+.notification-l1-filter:focus,
+.notification-file-type-filter:focus {
   outline: 1px solid rgba(255, 145, 169, 0.65);
 }
 

@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const updateNotificationsSection = document.getElementById('updateNotificationsSection');
   const updateNotificationsList = document.getElementById('updateNotificationsList');
   const updateNotificationCount = document.getElementById('updateNotificationCount');
+  const notificationFileTypeFilter = document.getElementById('notificationFileTypeFilter');
   const markNotificationsReadBtn = document.getElementById('markNotificationsReadBtn');
 
   // 全局数据状态缓存与过滤器状态
@@ -41,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let updateNotifications = [];
   let isNotificationsPanelOpen = false;
   let activeNotificationL1Path = 'all';
+  let activeNotificationFileType = 'all';
 
   function svgIcon(name, className = '') {
     const extraClass = className ? ` ${className}` : '';
@@ -79,6 +81,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('notificationL1Filter')?.addEventListener('change', (event) => {
     activeNotificationL1Path = event.target.value;
+    renderUpdateNotifications();
+  });
+
+  notificationFileTypeFilter?.addEventListener('change', (event) => {
+    activeNotificationFileType = event.target.value;
     renderUpdateNotifications();
   });
 
@@ -238,6 +245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     subtreeCache = await loadSubtreeCacheFromStorage(favorites);
     await loadUpdateNotificationsFromStorage();
     populateNotificationL1Filter();
+    populateNotificationFileTypeFilter();
     
     // 渲染切换 Tab 栏
     renderTabs();
@@ -366,6 +374,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         isTreeExpanded = false;
         isNotificationsPanelOpen = false;
         activeNotificationL1Path = 'all';
+        activeNotificationFileType = 'all';
         
         // 重新初始化并加载新站点的数据
         await initApp();
@@ -433,9 +442,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const configId = currentConfigId || 'legacy';
     return updateNotifications.filter(item => {
       if ((currentConfigId || spConfig) && item.configId !== configId) return false;
-      if (activeNotificationL1Path === 'all') return true;
-      return getNotificationFirstLevelDirectory(item, getNotificationConfig(item)) === activeNotificationL1Path;
+      if (activeNotificationL1Path !== 'all'
+        && getNotificationFirstLevelDirectory(item, getNotificationConfig(item)) !== activeNotificationL1Path) {
+        return false;
+      }
+      if (activeNotificationFileType !== 'all' && getNotificationFileType(item) !== activeNotificationFileType) {
+        return false;
+      }
+      return true;
     });
+  }
+
+  function getNotificationFileType(notification) {
+    const candidates = [notification?.name, notification?.relativeUrl, notification?.webUrl];
+    for (const value of candidates) {
+      const match = String(value || '').toLowerCase().match(/\.([a-z0-9]+)(?:[?#].*)?$/);
+      if (!match) continue;
+
+      const option = NOTIFICATION_FILE_TYPE_OPTIONS.find(item => item.extensions.includes(match[1]));
+      return option?.id || 'other';
+    }
+    return 'other';
   }
 
   function populateNotificationL1Filter() {
@@ -465,6 +492,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!names.has(activeNotificationL1Path)) activeNotificationL1Path = 'all';
     select.value = activeNotificationL1Path;
+  }
+
+  function populateNotificationFileTypeFilter() {
+    if (!notificationFileTypeFilter) return;
+
+    const validTypes = new Set([
+      'all',
+      ...NOTIFICATION_FILE_TYPE_OPTIONS.map(option => option.id),
+      'other'
+    ]);
+    if (!validTypes.has(activeNotificationFileType)) activeNotificationFileType = 'all';
+    notificationFileTypeFilter.value = activeNotificationFileType;
   }
 
   function formatUpdateNotificationTime(notification) {
@@ -732,6 +771,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     subtreeCache = await loadSubtreeCacheFromStorage(favorites);
     await loadUpdateNotificationsFromStorage();
     populateNotificationL1Filter();
+    populateNotificationFileTypeFilter();
     
     renderTabs();
     updateSyncTimeDisplay();
