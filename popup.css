@@ -1137,35 +1137,65 @@ body {
 
 .update-notifications-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   margin-bottom: 10px;
+}
+
+.update-notifications-summary-row,
+.update-notifications-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.update-notifications-summary-row {
+  width: 100%;
 }
 
 .update-notifications-title {
   color: rgba(255, 220, 228, 0.9);
-  margin-bottom: 3px;
+  margin-bottom: 0;
+  white-space: nowrap;
 }
 
-.update-notifications-subtitle {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.update-notifications-header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+.update-notifications-filter-row {
   flex-wrap: wrap;
-  gap: 6px;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .update-notification-count {
+  margin-left: auto;
   color: #ff91a9;
   font-size: 10px;
   white-space: nowrap;
+}
+
+.notification-file-type-settings-btn,
+.mark-notifications-read-btn {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 145, 169, 0.28);
+  border-radius: 6px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.notification-file-type-settings-btn:hover,
+.mark-notifications-read-btn:hover:not(:disabled) {
+  color: #fff;
+  border-color: rgba(255, 145, 169, 0.65);
+  background: rgba(255, 46, 99, 0.16);
+}
+
+.notification-file-type-settings-btn:focus-visible,
+.mark-notifications-read-btn:focus-visible {
+  outline: 1px solid rgba(255, 145, 169, 0.65);
+  outline-offset: 1px;
 }
 
 .notification-l1-filter,
@@ -1186,23 +1216,6 @@ body {
 .notification-l1-filter:focus,
 .notification-file-type-filter:focus {
   outline: 1px solid rgba(255, 145, 169, 0.65);
-}
-
-.mark-notifications-read-btn {
-  border: 1px solid rgba(255, 145, 169, 0.28);
-  border-radius: 6px;
-  padding: 4px 7px;
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 10px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mark-notifications-read-btn:hover:not(:disabled) {
-  color: #fff;
-  border-color: rgba(255, 145, 169, 0.65);
-  background: rgba(255, 46, 99, 0.16);
 }
 
 .mark-notifications-read-btn:disabled {

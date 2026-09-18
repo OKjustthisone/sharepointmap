@@ -140,12 +140,12 @@
       <!-- 文件更新提醒 -->
       <section id="updateNotificationsSection" class="content-section update-notifications-section hide">
         <div class="update-notifications-header">
-          <div>
-            <h3 class="section-title update-notifications-title">文件更新</h3>
-            <p class="update-notifications-subtitle">收藏目录中的文件更新</p>
-          </div>
-          <div class="update-notifications-header-actions">
+          <div class="update-notifications-summary-row">
+            <h3 class="section-title update-notifications-title">收藏目录文件更新</h3>
             <span id="updateNotificationCount" class="update-notification-count"></span>
+            <button id="markNotificationsReadBtn" class="mark-notifications-read-btn" type="button">全部已读</button>
+          </div>
+          <div class="update-notifications-filter-row">
             <select id="notificationL1Filter" class="notification-l1-filter" aria-label="按一级目录筛选通知">
               <option value="all">所有一级目录</option>
             </select>
@@ -157,7 +157,7 @@
               <option value="pdf">PDF</option>
               <option value="other">其他类型</option>
             </select>
-            <button id="markNotificationsReadBtn" class="mark-notifications-read-btn" type="button">全部已读</button>
+            <button id="notificationFileTypeSettingsBtn" class="notification-file-type-settings-btn" type="button">按类型设置</button>
           </div>
         </div>
         <div id="updateNotificationsList" class="update-notifications-list"></div>

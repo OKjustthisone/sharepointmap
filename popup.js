@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const updateNotificationsList = document.getElementById('updateNotificationsList');
   const updateNotificationCount = document.getElementById('updateNotificationCount');
   const notificationFileTypeFilter = document.getElementById('notificationFileTypeFilter');
+  const notificationFileTypeSettingsBtn = document.getElementById('notificationFileTypeSettingsBtn');
   const markNotificationsReadBtn = document.getElementById('markNotificationsReadBtn');
 
   // 全局数据状态缓存与过滤器状态
@@ -67,6 +68,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
+  notificationFileTypeSettingsBtn?.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   notificationsBtn.addEventListener('click', () => {
     const visibleNotifications = getVisibleUpdateNotifications();
