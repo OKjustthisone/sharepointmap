@@ -26,8 +26,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const updateNotificationsSection = document.getElementById('updateNotificationsSection');
   const updateNotificationsList = document.getElementById('updateNotificationsList');
   const updateNotificationCount = document.getElementById('updateNotificationCount');
+  const notificationFileTypePptBtn = document.getElementById('notificationFileTypePptBtn');
+  const notificationFileTypeDocBtn = document.getElementById('notificationFileTypeDocBtn');
   const notificationFileTypeFilter = document.getElementById('notificationFileTypeFilter');
-  const notificationFileTypeSettingsBtn = document.getElementById('notificationFileTypeSettingsBtn');
   const markNotificationsReadBtn = document.getElementById('markNotificationsReadBtn');
 
   // 全局数据状态缓存与过滤器状态
@@ -68,7 +69,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
-  notificationFileTypeSettingsBtn?.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   notificationsBtn.addEventListener('click', () => {
     const visibleNotifications = getVisibleUpdateNotifications();
@@ -87,8 +87,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   notificationFileTypeFilter?.addEventListener('change', (event) => {
-    activeNotificationFileType = event.target.value;
-    renderUpdateNotifications();
+    setActiveNotificationFileType(event.target.value);
+  });
+
+  notificationFileTypePptBtn?.addEventListener('click', () => {
+    setActiveNotificationFileType('ppt');
+  });
+
+  notificationFileTypeDocBtn?.addEventListener('click', () => {
+    setActiveNotificationFileType('word');
   });
 
   markNotificationsReadBtn.addEventListener('click', async () => {
@@ -497,15 +504,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function populateNotificationFileTypeFilter() {
-    if (!notificationFileTypeFilter) return;
-
     const validTypes = new Set([
       'all',
       ...NOTIFICATION_FILE_TYPE_OPTIONS.map(option => option.id),
       'other'
     ]);
     if (!validTypes.has(activeNotificationFileType)) activeNotificationFileType = 'all';
-    notificationFileTypeFilter.value = activeNotificationFileType;
+
+    const dropdownTypes = new Set(['all', 'excel', 'pdf', 'other']);
+    if (notificationFileTypeFilter) {
+      notificationFileTypeFilter.value = dropdownTypes.has(activeNotificationFileType)
+        ? activeNotificationFileType
+        : 'all';
+    }
+    notificationFileTypePptBtn?.classList.toggle('is-active', activeNotificationFileType === 'ppt');
+    notificationFileTypePptBtn?.setAttribute('aria-pressed', String(activeNotificationFileType === 'ppt'));
+    notificationFileTypeDocBtn?.classList.toggle('is-active', activeNotificationFileType === 'word');
+    notificationFileTypeDocBtn?.setAttribute('aria-pressed', String(activeNotificationFileType === 'word'));
+  }
+
+  function setActiveNotificationFileType(fileType) {
+    activeNotificationFileType = fileType;
+    populateNotificationFileTypeFilter();
+    renderUpdateNotifications();
   }
 
   function formatUpdateNotificationTime(notification) {

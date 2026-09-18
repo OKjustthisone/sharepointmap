@@ -1172,7 +1172,7 @@ body {
   white-space: nowrap;
 }
 
-.notification-file-type-settings-btn,
+.notification-file-type-quick-btn,
 .mark-notifications-read-btn {
   flex-shrink: 0;
   border: 1px solid rgba(255, 145, 169, 0.28);
@@ -1185,17 +1185,29 @@ body {
   transition: all 0.2s ease;
 }
 
-.notification-file-type-settings-btn:hover,
+.notification-file-type-quick-btn {
+  min-width: 42px;
+  text-align: center;
+}
+
+.notification-file-type-quick-btn:hover,
 .mark-notifications-read-btn:hover:not(:disabled) {
   color: #fff;
   border-color: rgba(255, 145, 169, 0.65);
   background: rgba(255, 46, 99, 0.16);
 }
 
-.notification-file-type-settings-btn:focus-visible,
+.notification-file-type-quick-btn:focus-visible,
 .mark-notifications-read-btn:focus-visible {
   outline: 1px solid rgba(255, 145, 169, 0.65);
   outline-offset: 1px;
+}
+
+.notification-file-type-quick-btn.is-active {
+  color: #fff;
+  border-color: rgba(255, 145, 169, 0.72);
+  background: rgba(255, 46, 99, 0.24);
+  box-shadow: 0 0 0 1px rgba(255, 145, 169, 0.12), 0 0 10px rgba(255, 46, 99, 0.16);
 }
 
 .notification-l1-filter,
