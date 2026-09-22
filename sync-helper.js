@@ -632,75 +632,235 @@ async function syncLevel1(configId) {
     await clearDNRRules();
   }
 }
-// 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (支持增量和全量更新)
-async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
-  await migrateConfigsIfNeeded();
+// 2. 并行且高效地抓取已收藏的 1 级文件夹子树 (快照模式：一次请求获取全部链接，再与本地逐一比对)
+// —— 快照模式辅助函数 ——
+const LIBRARY_SNAPSHOT_REUSE_MS = 60 * 1000;
+let libraryFlatSnapshotCache = null;
 
-  let siteUrl = '';
-  let libraryName = '';
-  let targetConfigId = '';
-  let targetConfig = null;
+async function fetchLibraryFlatSnapshot(siteUrl, libraryName) {
+  const cacheKey = `${siteUrl}|${libraryName}`;
+  const now = Date.now();
+  if (
+    libraryFlatSnapshotCache &&
+    libraryFlatSnapshotCache.key === cacheKey &&
+    now - libraryFlatSnapshotCache.at < LIBRARY_SNAPSHOT_REUSE_MS
+  ) {
+    return libraryFlatSnapshotCache.items;
+  }
 
-  const data = await chrome.storage.local.get(['sp_configs', 'sp_config', 'current_config_id']);
-  const configs = data.sp_configs || [];
-  
-  for (const config of configs) {
-    const cacheData = await chrome.storage.local.get(`l1_cache_${config.id}`);
-    const l1Cache = cacheData[`l1_cache_${config.id}`];
-    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
-      siteUrl = config.siteUrl;
-      libraryName = config.libraryName;
-      targetConfigId = config.id;
-      targetConfig = config;
-      break;
+  const headers = {
+    'Accept': 'application/json;odata=nometadata',
+    'Content-Type': 'application/json'
+  };
+
+  // 一次请求即可返回整个文档库的扁平清单（含全部 URL），超过 5000 项时自动分页
+  let url = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$top=5000&$select=UniqueId,FileLeafRef,FileRef,FileSystemObjectType,Modified,Created`;
+  const allItems = [];
+  let page = 0;
+  const MAX_PAGES = 30; // 30 * 5000 ≈ 15 万项上限
+
+  while (url && page < MAX_PAGES) {
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) {
+      throw new Error(`获取文档库链接快照失败 (HTTP ${res.status})`);
+    }
+    const data = await res.json();
+    allItems.push(...(data.value || []));
+    url = data['odata.nextLink'] || null;
+    page++;
+    if (url) {
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
   }
 
-  if (!siteUrl && data.sp_config) {
-    const l1CacheData = await chrome.storage.local.get('l1_cache');
-    const l1Cache = l1CacheData.l1_cache;
-    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
-      siteUrl = data.sp_config.siteUrl;
-      libraryName = data.sp_config.libraryName;
-      targetConfig = data.sp_config;
+  libraryFlatSnapshotCache = { key: cacheKey, items: allItems, at: Date.now() };
+  if (page > 1) {
+    console.log(`[SharePoint Map] Library snapshot fetched in ${page} pages (${allItems.length} items).`);
+  }
+  return allItems;
+}
+
+// 单目录手动同步：递归抓取该 1 级目录子树（GetFolderByServerRelativePath + $expand 并发爬取）。
+// 与原来可用的方案一致：不依赖 FileRef 前缀过滤（该过滤在 SharePoint 上可能返回 HTTP 500 或失配），
+// 只拉取该目录自身，速度快且不会因过滤失败而把目录写空。
+async function crawlSubfolderTree(siteUrl, libraryName, l1FolderRelativeUrl, baseUrl) {
+  const headers = {
+    'Accept': 'application/json;odata=nometadata',
+    'Content-Type': 'application/json'
+  };
+
+  const tree = {};
+  const queue = [l1FolderRelativeUrl];
+  const CONCURRENCY = 6;
+  let folderCount = 0;
+  let nodeCount = 0;
+  let lastFolder = l1FolderRelativeUrl;
+
+  while (queue.length > 0) {
+    const batch = queue.splice(0, CONCURRENCY);
+
+    await Promise.all(batch.map(async (currentRelativeUrl) => {
+      folderCount++;
+
+      let folderUrl = cleanRelativePathUrl(siteUrl, currentRelativeUrl, '');
+      if (folderUrl.endsWith('/')) {
+        folderUrl = folderUrl.slice(0, -1);
+      }
+      folderUrl += '?$expand=Folders,Files';
+
+      try {
+        const res = await fetch(folderUrl, { method: 'GET', headers });
+        if (!res.ok) {
+          if (currentRelativeUrl === l1FolderRelativeUrl) {
+            throw new Error(`获取该目录的子项失败 (HTTP ${res.status})`);
+          }
+          return;
+        }
+
+        const data = await res.json();
+        const subFolders = (data.Folders || []).filter(item => item.Name !== 'Forms');
+        const subFiles = data.Files || [];
+
+        subFolders.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+        subFiles.sort((a, b) => a.Name.localeCompare(b.Name, 'zh-CN', { numeric: true }));
+
+        const parsedFolders = subFolders.map(item => {
+          queue.push(item.ServerRelativeUrl);
+          return {
+            id: item.UniqueId,
+            name: item.Name,
+            type: 'folder',
+            relativeUrl: item.ServerRelativeUrl,
+            webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+            modifiedAt: getItemModifiedAt(item),
+            createdAt: getItemCreatedAt(item)
+          };
+        });
+
+        const parsedFiles = subFiles.map(item => {
+          return {
+            id: item.UniqueId,
+            name: item.Name,
+            type: 'file',
+            relativeUrl: item.ServerRelativeUrl,
+            webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+            modifiedAt: getItemModifiedAt(item),
+            createdAt: getItemCreatedAt(item)
+          };
+        });
+
+        tree[currentRelativeUrl] = {
+          folders: parsedFolders,
+          files: parsedFiles
+        };
+
+        nodeCount += parsedFolders.length + parsedFiles.length;
+        lastFolder = currentRelativeUrl;
+      } catch (err) {
+        if (currentRelativeUrl === l1FolderRelativeUrl) {
+          throw err;
+        }
+      }
+    }));
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+
+  if (!tree[l1FolderRelativeUrl]) {
+    tree[l1FolderRelativeUrl] = { folders: [], files: [] };
+  }
+  return { tree, folderCount, nodeCount, lastFolder };
+}
+
+function rebuildTreeFromFlatItems(flatItems, l1FolderRelativeUrl, baseUrl) {
+  const sortItems = arr => arr.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+  const tree = {};
+
+  flatItems.forEach(raw => {
+    const newPath = raw && raw.FileRef ? raw.FileRef : '';
+    if (!newPath) return;
+
+    const isFolder = Number(raw.FileSystemObjectType) === 1;
+    const name = raw.FileLeafRef || getFileNameFromPath(newPath);
+    if (isFolder && name === 'Forms') return;
+
+    const item = {
+      id: raw.UniqueId,
+      name,
+      type: isFolder ? 'folder' : 'file',
+      relativeUrl: newPath,
+      webUrl: `${baseUrl}${newPath}`,
+      modifiedAt: getItemModifiedAt(raw),
+      createdAt: getItemCreatedAt(raw)
+    };
+
+    const parentPath = newPath.slice(0, newPath.lastIndexOf('/'));
+    if (!tree[parentPath]) tree[parentPath] = { folders: [], files: [] };
+    (item.type === 'folder' ? tree[parentPath].folders : tree[parentPath].files).push(item);
+
+    if (item.type === 'folder' && !tree[newPath]) {
+      tree[newPath] = { folders: [], files: [] };
+    }
+  });
+
+  if (!tree[l1FolderRelativeUrl]) tree[l1FolderRelativeUrl] = { folders: [], files: [] };
+  Object.keys(tree).forEach(key => {
+    sortItems(tree[key].folders);
+    sortItems(tree[key].files);
+  });
+  return tree;
+}
+
+function isCacheItemEqual(a, b) {
+  return Boolean(a && b) &&
+    a.id === b.id &&
+    a.name === b.name &&
+    a.type === b.type &&
+    a.relativeUrl === b.relativeUrl &&
+    a.modifiedAt === b.modifiedAt &&
+    a.createdAt === b.createdAt;
+}
+
+function treesEqual(a, b) {
+  if (!a || !b) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  const sortedA = [...keysA].sort();
+  const sortedB = [...keysB].sort();
+  for (let i = 0; i < sortedA.length; i++) {
+    if (sortedA[i] !== sortedB[i]) return false;
+  }
+  for (const key of sortedA) {
+    const fa = (a[key] && a[key].folders) || [];
+    const fb = (b[key] && b[key].folders) || [];
+    const fia = (a[key] && a[key].files) || [];
+    const fib = (b[key] && b[key].files) || [];
+    if (fa.length !== fb.length || fia.length !== fib.length) return false;
+    for (let i = 0; i < fa.length; i++) {
+      if (!isCacheItemEqual(fa[i], fb[i])) return false;
+    }
+    for (let i = 0; i < fia.length; i++) {
+      if (!isCacheItemEqual(fia[i], fib[i])) return false;
     }
   }
+  return true;
+}
 
-  if (!siteUrl) {
-    const currentId = data.current_config_id || (configs[0] ? configs[0].id : '');
-    const config = configs.find(c => c.id === currentId);
-    if (config) {
-      siteUrl = config.siteUrl;
-      libraryName = config.libraryName;
-      targetConfigId = config.id;
-      targetConfig = config;
-    } else if (data.sp_config) {
-      siteUrl = data.sp_config.siteUrl;
-      libraryName = data.sp_config.libraryName;
-      targetConfig = data.sp_config;
-    }
-  }
-
-  if (!siteUrl || !libraryName) {
-    throw new Error('站点配置或文档库名称丢失，无法抓取子树');
-  }
-
-  let modifiedAfter = parseSyncTimestamp(syncOptions.modifiedAfter);
-  let modifiedBefore = parseSyncTimestamp(syncOptions.modifiedBefore);
-  if (syncOptions.mode === 'manual' && modifiedAfter === null) {
-    const automaticCheckpoint = await getAutomaticSyncCheckpoint(targetConfigId);
-    if (automaticCheckpoint !== null) {
-      modifiedAfter = automaticCheckpoint;
-      if (modifiedBefore === null) modifiedBefore = Date.now();
-    }
-  }
-  const configuredOverlapMs = Number(syncOptions.overlapMs);
-  const overlapMs = syncOptions.overlapMs === undefined
-    ? INCREMENTAL_SYNC_OVERLAP_MS
-    : Math.max(0, Number.isFinite(configuredOverlapMs) ? configuredOverlapMs : 0);
-
-  const baseUrl = siteUrl.split('/sites/')[0];
-
+// 自动更新模式：恢复基于 Modified 时间窗的增量同步（窗口查询 + 变动文件夹重拉 + 全量回退 + 垃圾回收）
+async function syncSubtreeIncremental(
+  l1FolderId,
+  l1FolderRelativeUrl,
+  syncOptions,
+  siteUrl,
+  libraryName,
+  targetConfigId,
+  targetConfig,
+  baseUrl,
+  modifiedAfter,
+  modifiedBefore,
+  overlapMs
+) {
   let folderCount = 0;
   let nodeCount = 0;
   let lastReportedFolder = l1FolderRelativeUrl;
@@ -1265,6 +1425,348 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
   }
 }
 
+async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
+  await migrateConfigsIfNeeded();
+
+  let siteUrl = '';
+  let libraryName = '';
+  let targetConfigId = '';
+  let targetConfig = null;
+
+  const data = await chrome.storage.local.get(['sp_configs', 'sp_config', 'current_config_id']);
+  const configs = data.sp_configs || [];
+  
+  for (const config of configs) {
+    const cacheData = await chrome.storage.local.get(`l1_cache_${config.id}`);
+    const l1Cache = cacheData[`l1_cache_${config.id}`];
+    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
+      siteUrl = config.siteUrl;
+      libraryName = config.libraryName;
+      targetConfigId = config.id;
+      targetConfig = config;
+      break;
+    }
+  }
+
+  if (!siteUrl && data.sp_config) {
+    const l1CacheData = await chrome.storage.local.get('l1_cache');
+    const l1Cache = l1CacheData.l1_cache;
+    if (l1Cache && l1Cache.items && l1Cache.items.some(item => item.id === l1FolderId)) {
+      siteUrl = data.sp_config.siteUrl;
+      libraryName = data.sp_config.libraryName;
+      targetConfig = data.sp_config;
+    }
+  }
+
+  if (!siteUrl) {
+    const currentId = data.current_config_id || (configs[0] ? configs[0].id : '');
+    const config = configs.find(c => c.id === currentId);
+    if (config) {
+      siteUrl = config.siteUrl;
+      libraryName = config.libraryName;
+      targetConfigId = config.id;
+      targetConfig = config;
+    } else if (data.sp_config) {
+      siteUrl = data.sp_config.siteUrl;
+      libraryName = data.sp_config.libraryName;
+      targetConfig = data.sp_config;
+    }
+  }
+
+  if (!siteUrl || !libraryName) {
+    throw new Error('站点配置或文档库名称丢失，无法抓取子树');
+  }
+
+  let modifiedAfter = parseSyncTimestamp(syncOptions.modifiedAfter);
+  let modifiedBefore = parseSyncTimestamp(syncOptions.modifiedBefore);
+  if (syncOptions.mode === 'manual' && modifiedAfter === null) {
+    const automaticCheckpoint = await getAutomaticSyncCheckpoint(targetConfigId);
+    if (automaticCheckpoint !== null) {
+      modifiedAfter = automaticCheckpoint;
+      if (modifiedBefore === null) modifiedBefore = Date.now();
+    }
+  }
+  const configuredOverlapMs = Number(syncOptions.overlapMs);
+  const overlapMs = syncOptions.overlapMs === undefined
+    ? INCREMENTAL_SYNC_OVERLAP_MS
+    : Math.max(0, Number.isFinite(configuredOverlapMs) ? configuredOverlapMs : 0);
+
+  const baseUrl = siteUrl.split('/sites/')[0];
+
+  // 自动更新模式走原 Modified 时间窗增量逻辑；手动模式走全量快照比对
+  if (syncOptions.mode === 'automatic') {
+    return syncSubtreeIncremental(
+      l1FolderId,
+      l1FolderRelativeUrl,
+      syncOptions,
+      siteUrl,
+      libraryName,
+      targetConfigId,
+      targetConfig,
+      baseUrl,
+      modifiedAfter,
+      modifiedBefore,
+      overlapMs
+    );
+  }
+
+  let folderCount = 0;
+  let nodeCount = 0;
+  let newTree = null;
+  let lastReportedFolder = l1FolderRelativeUrl;
+  let isSyncActive = true;
+  const syncStatusKey = 'sync_status_' + l1FolderId;
+
+  // 定期将当前进度写入 storage，彻底避免多任务并发时的写冲突，节省性能
+  const progressTimer = setInterval(async () => {
+    if (!isSyncActive) return;
+    try {
+      const pathParts = lastReportedFolder.split('/');
+      const currentFolderName = pathParts[pathParts.length - 1] || lastReportedFolder;
+
+      if (!isSyncActive) return;
+      await chrome.storage.local.set({
+        [syncStatusKey]: {
+          status: 'syncing',
+          folderCount: folderCount,
+          nodeCount: nodeCount,
+          currentFolder: currentFolderName
+        }
+      });
+    } catch (err) {
+      console.warn('Failed to write progress:', err);
+    }
+  }, 300);
+
+  try {
+    // 立即写入初始同步状态，避免 300ms 延迟导致看不到同步状态
+    try {
+      const pathParts = l1FolderRelativeUrl.split('/');
+      const currentFolderName = pathParts[pathParts.length - 1] || l1FolderRelativeUrl;
+      await chrome.storage.local.set({
+        [syncStatusKey]: {
+          status: 'syncing',
+          folderCount: 0,
+          nodeCount: 0,
+          currentFolder: currentFolderName
+        }
+      });
+    } catch (err) {
+      console.warn('Failed to write initial sync status:', err);
+    }
+
+    await setupCookieDNRRule(siteUrl);
+
+    // 获取历史缓存
+    const storageKey = 'subtree_cache_' + l1FolderId;
+    const storageData = await chrome.storage.local.get(storageKey);
+    const cachedData = storageData[storageKey];
+    const oldTree = cachedData?.tree;
+    const lastSyncTime = cachedData?.last_updated || 0;
+    const hasPreviousSnapshot = Boolean(cachedData && cachedData.tree);
+    const oldItemsById = getCachedItemsById(oldTree);
+    const shouldDetectUpdates = syncOptions.notifyUpdates === true;
+    let updateEvents = [];
+    const hasExplicitModifiedWindow = modifiedAfter !== null || modifiedBefore !== null;
+    const incrementalSyncStartTime = Math.max(0, (modifiedAfter !== null ? modifiedAfter : lastSyncTime) - overlapMs);
+
+    // （快照模式下已用一次请求获取全部链接并对本地 ID/名称逐一比对，无逐文件夹增量查询）
+
+    // —— 快照来源：全部同步时使用调用方共享的整库快照；单目录手动同步时仅递归抓取该目录 ——
+    if (Array.isArray(syncOptions.snapshot && syncOptions.snapshot.items)) {
+      const flatItems = syncOptions.snapshot.items;
+
+      // 只保留当前 1 级目录子树下的项（按 URL 前缀过滤，同时排除“前缀相同但非直属”的同名邻居）
+      const subtreeFlatItems = flatItems.filter(raw => {
+        const path = raw && raw.FileRef ? raw.FileRef : '';
+        return path === l1FolderRelativeUrl || path.startsWith(l1FolderRelativeUrl + '/');
+      });
+
+      // 防写空保护：快照无任何条目但旧缓存里有内容时，视为拉取异常，保留旧缓存，绝不把目录清空
+      const oldRootHasItems = oldTree &&
+        oldTree[l1FolderRelativeUrl] &&
+        ((oldTree[l1FolderRelativeUrl].folders && oldTree[l1FolderRelativeUrl].folders.length > 0) ||
+          (oldTree[l1FolderRelativeUrl].files && oldTree[l1FolderRelativeUrl].files.length > 0));
+      if (subtreeFlatItems.length === 0 && oldRootHasItems) {
+        console.log(`[SharePoint Map] Snapshot returned no items for ${l1FolderRelativeUrl}; keeping existing cache to avoid emptying the folder.`);
+        if (shouldDetectUpdates) {
+          await updateFileUpdateBadge();
+        }
+        return nodeCount;
+      }
+
+      // 由快照一次性重建整棵子树（无需逐文件夹请求），重命名/移动/新增/删除自动体现
+      newTree = rebuildTreeFromFlatItems(subtreeFlatItems, l1FolderRelativeUrl, baseUrl);
+      folderCount = Object.keys(newTree).length;
+      nodeCount = Object.values(newTree).reduce((sum, node) => {
+        return sum + (node.folders ? node.folders.length : 0) + (node.files ? node.files.length : 0);
+      }, 0);
+    } else {
+      // 单目录手动同步：仅递归抓取该目录自身，可靠且快速
+      const crawl = await crawlSubfolderTree(siteUrl, libraryName, l1FolderRelativeUrl, baseUrl);
+      newTree = crawl.tree;
+      folderCount = crawl.folderCount;
+      nodeCount = crawl.nodeCount;
+      lastReportedFolder = crawl.lastFolder;
+
+      // 防写空保护：目录拉取结果为空但旧缓存有内容时，保留旧缓存
+      const crawlRoot = newTree[l1FolderRelativeUrl];
+      const crawlRootEmpty = !crawlRoot ||
+        ((!crawlRoot.folders || crawlRoot.folders.length === 0) && (!crawlRoot.files || crawlRoot.files.length === 0));
+      if (crawlRootEmpty && crawl.nodeCount === 0 && oldTree &&
+        oldTree[l1FolderRelativeUrl] &&
+        ((oldTree[l1FolderRelativeUrl].folders && oldTree[l1FolderRelativeUrl].folders.length > 0) ||
+          (oldTree[l1FolderRelativeUrl].files && oldTree[l1FolderRelativeUrl].files.length > 0))
+      ) {
+        console.log(`[SharePoint Map] Crawl returned no items for ${l1FolderRelativeUrl}; keeping existing cache to avoid emptying the folder.`);
+        if (shouldDetectUpdates) {
+          await updateFileUpdateBadge();
+        }
+        return nodeCount;
+      }
+    }
+    lastReportedFolder = l1FolderRelativeUrl;
+
+    // ID + 名称逐一比对：完全一致则缓存不更新；不一致（重命名/移动/新增/删除）才写缓存
+    const somethingChanged = !treesEqual(newTree, oldTree);
+    if (somethingChanged) {
+      console.log(`[SharePoint Map] Subtree changed detected: ${l1FolderRelativeUrl} (${folderCount} folders, ${nodeCount} items).`);
+    }
+
+    // 通过新旧两份快照按 ID 比对生成文件更新提醒
+    if (shouldDetectUpdates && hasPreviousSnapshot) {
+      const newItemsById = getCachedItemsById(newTree);
+      newItemsById.forEach(currentItem => {
+        if (currentItem.type !== 'file' || !isNotificationFileName(currentItem.name, targetConfig)) return;
+
+        const previousItem = oldItemsById.get(currentItem.id);
+        const currentModifiedMs = Date.parse(currentItem.modifiedAt || '');
+        if (
+          hasExplicitModifiedWindow &&
+          (!Number.isFinite(currentModifiedMs) ||
+            currentModifiedMs <= incrementalSyncStartTime ||
+            (modifiedBefore !== null && currentModifiedMs > modifiedBefore))
+        ) {
+          return;
+        }
+
+        if (!previousItem) {
+          const uploadEvent = buildFileUpdateEvent(currentItem, 'uploaded', targetConfig);
+          if (uploadEvent) updateEvents.push(uploadEvent);
+          return;
+        }
+
+        const previousModifiedMs = Date.parse(previousItem.modifiedAt || '');
+        if (
+          Number.isFinite(currentModifiedMs) &&
+          Number.isFinite(previousModifiedMs) &&
+          currentModifiedMs > previousModifiedMs
+        ) {
+          const modifiedEvent = buildFileUpdateEvent(currentItem, 'modified', targetConfig);
+          if (modifiedEvent) updateEvents.push(modifiedEvent);
+        }
+      });
+    }
+
+    // 从最终的 newTree 中重新构建完整的 allDiscoveredItems 映射，确保自愈机制能覆盖到未变动的项目
+    const allDiscoveredItems = {};
+    Object.keys(newTree).forEach(parentPath => {
+      const node = newTree[parentPath];
+      if (node.folders) {
+        node.folders.forEach(f => {
+          allDiscoveredItems[f.id] = f;
+        });
+      }
+      if (node.files) {
+        node.files.forEach(f => {
+          allDiscoveredItems[f.id] = f;
+        });
+      }
+    });
+
+    // 自动更新收藏夹中可能发生重命名或路径变更的深层项目
+    const favoritesKey = targetConfigId ? `favorites_${targetConfigId}` : 'favorites';
+    const favData = await chrome.storage.local.get(favoritesKey);
+    const favoritesList = favData[favoritesKey];
+    if (favoritesList && Array.isArray(favoritesList)) {
+      let updatedFavs = false;
+      favoritesList.forEach(fav => {
+        const matchingItem = allDiscoveredItems[fav.id];
+        if (matchingItem) {
+          if (
+            fav.name !== matchingItem.name ||
+            fav.relativeUrl !== matchingItem.relativeUrl ||
+            fav.webUrl !== matchingItem.webUrl ||
+            fav.modifiedAt !== matchingItem.modifiedAt ||
+            fav.createdAt !== matchingItem.createdAt
+          ) {
+            fav.name = matchingItem.name;
+            fav.relativeUrl = matchingItem.relativeUrl;
+            fav.webUrl = matchingItem.webUrl;
+            fav.modifiedAt = matchingItem.modifiedAt;
+            fav.createdAt = matchingItem.createdAt;
+            updatedFavs = true;
+          }
+        }
+      });
+      if (updatedFavs) {
+        await chrome.storage.local.set({ [favoritesKey]: favoritesList });
+        console.log('[SharePoint Map] Self-healed deep items in favorites.');
+      }
+    }
+
+    // ID + 名称逐一比对：完全一致则缓存不更新；不一致（重命名/移动/新增/删除）才写缓存
+    if (somethingChanged) {
+      try {
+        await chrome.storage.local.set({
+          [storageKey]: {
+            last_updated: Date.now(),
+            tree: newTree
+          }
+        });
+      } catch (err) {
+        await recordSyncLog('error', err, {
+          phase: 'save-cache',
+          storageKey,
+          folderCount,
+          nodeCount,
+          errorName: err?.name || ''
+        });
+        throw err;
+      }
+    } else {
+      console.log(`[SharePoint Map] Subtree unchanged: ${l1FolderRelativeUrl}; cache write skipped (${folderCount} folders, ${nodeCount} items).`);
+    }
+
+    if (shouldDetectUpdates && updateEvents.length > 0) {
+      await recordFileUpdateNotifications(targetConfigId, targetConfig, updateEvents);
+    } else if (shouldDetectUpdates) {
+      await updateFileUpdateBadge();
+    }
+    return nodeCount;
+
+  } catch (err) {
+    await recordSyncLog('error', err, {
+      phase: 'subtree-sync',
+      folder: l1FolderRelativeUrl,
+      folderCount,
+      nodeCount
+    });
+    throw err;
+  } finally {
+    isSyncActive = false;
+    clearInterval(progressTimer);
+    
+    await clearDNRRules();
+    // 清除正在同步的状态 (直接删除对应的 Key)
+    try {
+      await chrome.storage.local.remove(syncStatusKey);
+    } catch (err) {
+      console.warn('Failed to clear sync status in finally:', err);
+    }
+  }
+}
+
 // 3. 同步所有配置下的 1 级目录与已收藏子树
 async function performAllSync(options = {}) {
   const notifyUpdates = options.notifyUpdates === true;
@@ -1322,6 +1824,14 @@ async function performAllSync(options = {}) {
       return syncOptions;
     };
 
+    const buildSubtreeSyncOptionsWithSnapshot = (configId, snapshotItems) => {
+      const syncOptions = buildSubtreeSyncOptions(configId);
+      if (snapshotItems) {
+        syncOptions.snapshot = { items: snapshotItems };
+      }
+      return syncOptions;
+    };
+
     const spConfigs = Array.isArray(configData.sp_configs) ? configData.sp_configs : [];
     const configsToSync = requestedConfigId
       ? spConfigs.filter(config => config.id === requestedConfigId)
@@ -1344,6 +1854,12 @@ async function performAllSync(options = {}) {
           if (favorites && Array.isArray(favorites)) {
             const l1Folders = favorites.filter(fav => fav.level === 1 && fav.type === 'folder');
             console.log(`[SharePoint Map] Syncing ${l1Folders.length} favorited Level 1 subtrees for "${config.name}"...`);
+
+            // 手动模式下共享同一份文档库扁平快照，避免多个收藏子目录重复请求
+            const snapshotItems = syncMode === 'manual' && l1Folders.length > 0
+              ? await fetchLibraryFlatSnapshot(config.siteUrl, config.libraryName)
+              : null;
+
             for (const favFolder of l1Folders) {
               const matchingL1 = l1Items.find(item => item.id === favFolder.id);
               if (matchingL1) {
@@ -1351,7 +1867,7 @@ async function performAllSync(options = {}) {
                   await syncSubtree(
                     favFolder.id,
                     matchingL1.relativeUrl,
-                    buildSubtreeSyncOptions(config.id)
+                    buildSubtreeSyncOptionsWithSnapshot(config.id, snapshotItems)
                   );
                 } catch (err) {
                   configSyncFailed = true;

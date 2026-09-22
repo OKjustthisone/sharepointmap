@@ -201,7 +201,7 @@
         <section id="favoritesSection" class="content-section">
           <div class="favorites-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <h3 class="section-title section-title-with-icon" style="margin-bottom: 0;"><svg class="svg-icon section-icon favorite-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-star-filled"></use></svg><span>快捷收藏</span><span id="favCount"></span></h3>
-            <span id="favSyncProgress" class="fav-sync-progress hide"></span>
+            <span style="display: inline-flex; align-items: center; gap: 8px;"><span id="favSyncProgress" class="fav-sync-progress hide"></span><button id="syncAllBtn" class="l1-sync-btn" title="同步当前配置的全部收藏目录及子目录"><span>全部同步</span><svg class="svg-icon sync-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-sync"></use></svg></button></span>
           </div>
           <div id="favoritesList" class="empty-list-placeholder">
             暂无收藏。点击下方文件夹或文件旁的收藏按钮即可加入收藏夹。
@@ -215,7 +215,7 @@
               <span class="directory-title-label"><svg class="svg-icon section-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-folder-open"></use></svg><span>全部目录 (仅用于添加收藏)</span></span>
               <span id="directoryToggleArrow" class="toggle-arrow" style="margin-right: 8px;"><svg class="svg-icon toggle-arrow-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-chevron-right"></use></svg><span class="toggle-arrow-label">展开浏览</span></span>
             </h3>
-            <button id="syncL1Btn" class="l1-sync-btn" title="同步当前配置的收藏目录及子目录"><span>手动同步</span><svg class="svg-icon sync-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-sync"></use></svg></button>
+            <button id="syncL1Btn" class="l1-sync-btn" title="仅同步当前配置的一级目录（不含收藏子目录）"><span>手动同步</span><svg class="svg-icon sync-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#icon-sync"></use></svg></button>
           </div>
           <div id="directoryTree" class="directory-tree-container collapsed">
             <div class="loading-spinner-wrapper">

@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // DOM 元素获取
   const settingsBtn = document.getElementById('settingsBtn');
   const syncL1Btn = document.getElementById('syncL1Btn');
+  const syncAllBtn = document.getElementById('syncAllBtn');
   const alertBanner = document.getElementById('alertBanner');
   const alertText = document.getElementById('alertText');
   const alertActionBtn = document.getElementById('alertActionBtn');
@@ -125,21 +126,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateDirectoryToggleIndicator(isTreeExpanded);
   });
   
-  // 手动同步当前配置的 1 级目录及已收藏子树
+  // 手动同步当前配置的一级目录（仅同步 L1 目录链接）
   syncL1Btn.addEventListener('click', (e) => {
     e.stopPropagation();
     syncL1Btn.classList.add('loading');
-    showToast('已在后台启动收藏目录同步...', 'sync');
-    chrome.runtime.sendMessage({ action: 'sync_all', configId: currentConfigId }, (response) => {
+    showToast('已在后台启动一级目录同步...', 'sync');
+    chrome.runtime.sendMessage({ action: 'sync_level1', configId: currentConfigId }, (response) => {
       syncL1Btn.classList.remove('loading');
       if (chrome.runtime.lastError) {
+        console.error('Background sync_level1 failed:', chrome.runtime.lastError);
+        showToast('一级目录同步异常: ' + chrome.runtime.lastError.message, 'alert', true);
+      } else if (response && !response.success) {
+        console.error('Background sync_level1 returned error:', response.error);
+        showToast(`一级目录同步失败: ${response.error}`, 'alert', true);
+      } else {
+        showToast('一级目录同步完成！', 'check');
+      }
+    });
+  });
+
+  // 手动同步当前配置的一级目录及全部已收藏子树（快照比对）
+  syncAllBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    syncAllBtn.classList.add('loading');
+    showToast('已在后台启动全部收藏目录同步...', 'sync');
+    chrome.runtime.sendMessage({ action: 'sync_all', configId: currentConfigId }, (response) => {
+      syncAllBtn.classList.remove('loading');
+      if (chrome.runtime.lastError) {
         console.error('Background manual sync failed:', chrome.runtime.lastError);
-        showToast('手动同步异常: ' + chrome.runtime.lastError.message, 'alert', true);
+        showToast('全部同步异常: ' + chrome.runtime.lastError.message, 'alert', true);
       } else if (response && !response.success) {
         console.error('Background manual sync returned error:', response.error);
-        showToast(`手动同步失败: ${response.error}`, 'alert', true);
+        showToast(`全部同步失败: ${response.error}`, 'alert', true);
       } else {
-        showToast('收藏目录同步完成，更新提醒已生成（如有）！', 'check');
+        showToast('全部同步完成，更新提醒已生成（如有）！', 'check');
       }
     });
   });
