@@ -18,29 +18,34 @@ async function exportSharePointCache() {
     const data = await chrome.storage.local.get(null);
     console.log('获取到存储数据，共有 ' + Object.keys(data).length + ' 个键');
     
-    // 创建导出数据结构
-    const exportData = {
-      exportTime: new Date().toISOString(),
-      extensionVersion: chrome.runtime.getManifest().version,
-      caches: {},
-      configs: data.sp_configs || [],
-      currentConfigId: data.current_config_id || ''
-    };
+    // 创建导出数据结构（复用共享逻辑：仅导出 /sites/IVPT/IVPProjects，URL 已转义）
+    const exportData = (typeof buildCacheExportData === 'function')
+      ? await buildCacheExportData()
+      : {
+          exportTime: new Date().toISOString(),
+          extensionVersion: chrome.runtime.getManifest().version,
+          caches: {},
+          configs: data.sp_configs || [],
+          currentConfigId: data.current_config_id || ''
+        };
     
-    // 提取缓存数据
+    // 提取缓存数据（仅在共享逻辑不可用时回退到原始提取）
     let cacheCount = 0;
-    for (const [key, value] of Object.entries(data)) {
-      // 提取所有缓存数据
-      if (key.startsWith('l1_cache') || 
-          key.startsWith('subtree_cache') || 
-          key.startsWith('favorites') ||
-          key === 'sp_config') {
-        exportData.caches[key] = value;
-        cacheCount++;
+    if (typeof buildCacheExportData !== 'function') {
+      for (const [key, value] of Object.entries(data)) {
+        if (key.startsWith('l1_cache') || 
+            key.startsWith('subtree_cache') || 
+            key.startsWith('favorites') ||
+            key === 'sp_config') {
+          exportData.caches[key] = value;
+          cacheCount++;
+        }
       }
+    } else {
+      cacheCount = Object.keys(exportData.caches).length;
     }
     
-    console.log(`提取了 ${cacheCount} 个缓存项`);
+    console.log(`提取了 ${cacheCount} 个缓存项（仅限 /sites/IVPT/IVPProjects 收藏目录）`);
     
     // 分析缓存结构，为VBA做准备
     console.log('分析缓存结构...');

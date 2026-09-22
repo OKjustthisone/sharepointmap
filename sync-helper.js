@@ -1434,25 +1434,107 @@ async function performAllSync(options = {}) {
 // 相对 Chrome 默认下载目录（C:\Users\xin.zhou\Downloads）的导出路径，
 // 固定文件名，每次导出自动覆盖旧文件。
 const CACHE_EXPORT_FILENAME = 'my app\\sharepointmap\\exported_cache.json';
+// 仅导出该站点/文档库下的收藏目录 URL，其他站点和库不导出
+const EXPORT_SITE_PATH = '/sites/IVPT';
+const EXPORT_LIBRARY_NAME = 'IVPProjects';
+const EXPORT_URL_PREFIX = `${EXPORT_SITE_PATH}/${EXPORT_LIBRARY_NAME}`;
+
+// 对 URL 进行百分号转义（先解码再编码，避免重复转义）
+function escapeExportUrl(value) {
+  if (typeof value !== 'string' || !value) return value;
+  try {
+    return encodeURI(decodeURI(value));
+  } catch (err) {
+    try {
+      return encodeURI(value);
+    } catch (e) {
+      return value;
+    }
+  }
+}
+
+function isUnderExportPrefix(relativeUrl) {
+  if (typeof relativeUrl !== 'string' || !relativeUrl) return false;
+  const rel = relativeUrl.toLowerCase();
+  const prefix = EXPORT_URL_PREFIX.toLowerCase();
+  return rel === prefix || rel.startsWith(prefix + '/');
+}
+
+function isExportSiteUrl(siteUrl) {
+  return typeof siteUrl === 'string' && /\/sites\/ivpt(?=\/|$|[?#])/i.test(siteUrl);
+}
+
+function filterAndEscapeItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(item => item && isUnderExportPrefix(item.relativeUrl))
+    .map(item => ({
+      ...item,
+      relativeUrl: escapeExportUrl(item.relativeUrl),
+      webUrl: escapeExportUrl(item.webUrl)
+    }));
+}
+
+function filterAndEscapeTreeCache(cache) {
+  if (!cache || typeof cache !== 'object' || !cache.tree || typeof cache.tree !== 'object') {
+    return null;
+  }
+
+  const filteredTree = {};
+  for (const [path, children] of Object.entries(cache.tree)) {
+    if (!isUnderExportPrefix(path)) continue;
+    const node = children && typeof children === 'object' ? children : {};
+    filteredTree[escapeExportUrl(path)] = {
+      ...node,
+      folders: Array.isArray(node.folders) ? filterAndEscapeItems(node.folders) : [],
+      files: Array.isArray(node.files) ? filterAndEscapeItems(node.files) : []
+    };
+  }
+
+  if (Object.keys(filteredTree).length === 0) return null;
+  return { ...cache, tree: filteredTree };
+}
 
 async function buildCacheExportData() {
   const data = await chrome.storage.local.get(null);
+
+  const configs = (Array.isArray(data.sp_configs) ? data.sp_configs : [])
+    .filter(cfg => cfg && isExportSiteUrl(cfg.siteUrl) && cfg.libraryName === EXPORT_LIBRARY_NAME)
+    .map(cfg => ({ ...cfg, siteUrl: escapeExportUrl(cfg.siteUrl) }));
+
   const exportData = {
     exportTime: new Date().toISOString(),
     extensionVersion: chrome.runtime.getManifest().version,
     caches: {},
-    configs: data.sp_configs || [],
-    currentConfigId: data.current_config_id || ''
+    configs,
+    currentConfigId: configs.some(cfg => cfg.id === data.current_config_id)
+      ? (data.current_config_id || '')
+      : ''
   };
 
   for (const [key, value] of Object.entries(data)) {
-    if (
-      key.startsWith('l1_cache') ||
-      key.startsWith('subtree_cache') ||
-      key.startsWith('favorites') ||
-      key === 'sp_config'
-    ) {
-      exportData.caches[key] = value;
+    if (key.startsWith('l1_cache')) {
+      const items = value && Array.isArray(value.items) ? filterAndEscapeItems(value.items) : [];
+      if (items.length > 0) {
+        exportData.caches[key] = { ...value, items };
+      }
+    } else if (key.startsWith('favorites')) {
+      const items = filterAndEscapeItems(value);
+      if (items.length > 0) {
+        exportData.caches[key] = items;
+      }
+    } else if (key.startsWith('subtree_cache')) {
+      const filtered = filterAndEscapeTreeCache(value);
+      if (filtered) {
+        exportData.caches[key] = filtered;
+      }
+    } else if (key === 'sp_config') {
+      if (value && isExportSiteUrl(value.siteUrl) && value.libraryName === EXPORT_LIBRARY_NAME) {
+        exportData.caches.sp_config = {
+          ...value,
+          siteUrl: escapeExportUrl(value.siteUrl)
+        };
+      }
     }
   }
 
