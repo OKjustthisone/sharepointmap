@@ -308,6 +308,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         await syncLevel1(currentConfigId);
         showToast('1 级目录同步成功！', 'check');
+        // 首次同步完成后自动导出缓存并覆盖旧文件
+        await exportSharePointCacheToFile();
         await loadDataFromStorage();
         populateL1FilterDropdown();
         renderFavorites();
@@ -330,6 +332,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         syncLevel1(currentConfigId)
           .then(async () => {
             console.log('Auto refresh of Level 1 completed.');
+            // 自动刷新完成后自动导出缓存并覆盖旧文件
+            await exportSharePointCacheToFile();
             await loadDataFromStorage();
             populateL1FilterDropdown();
             renderFavorites();

@@ -1430,6 +1430,81 @@ async function performAllSync(options = {}) {
   }
 }
 
+// ==================== 缓存导出（刷新后自动覆盖导出） ====================
+// 相对 Chrome 默认下载目录（C:\Users\xin.zhou\Downloads）的导出路径，
+// 固定文件名，每次导出自动覆盖旧文件。
+const CACHE_EXPORT_FILENAME = 'my app\\sharepointmap\\exported_cache.json';
+
+async function buildCacheExportData() {
+  const data = await chrome.storage.local.get(null);
+  const exportData = {
+    exportTime: new Date().toISOString(),
+    extensionVersion: chrome.runtime.getManifest().version,
+    caches: {},
+    configs: data.sp_configs || [],
+    currentConfigId: data.current_config_id || ''
+  };
+
+  for (const [key, value] of Object.entries(data)) {
+    if (
+      key.startsWith('l1_cache') ||
+      key.startsWith('subtree_cache') ||
+      key.startsWith('favorites') ||
+      key === 'sp_config'
+    ) {
+      exportData.caches[key] = value;
+    }
+  }
+
+  return exportData;
+}
+
+function downloadViaExtensionApi(url) {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({
+      url,
+      filename: CACHE_EXPORT_FILENAME,
+      conflictAction: 'overwrite',
+      saveAs: false
+    }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(downloadId);
+      }
+    });
+  });
+}
+
+async function exportSharePointCacheToFile() {
+  try {
+    const exportData = await buildCacheExportData();
+    const jsonStr = JSON.stringify(exportData, null, 2);
+
+    let url;
+    if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      url = URL.createObjectURL(new Blob([jsonStr], { type: 'application/json' }));
+    } else {
+      url = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonStr);
+    }
+
+    await downloadViaExtensionApi(url);
+
+    if (url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+    }
+
+    console.log(`[SharePoint Map] Cache exported and overwritten: ${CACHE_EXPORT_FILENAME} (${Object.keys(exportData.caches).length} cache keys)`);
+    return true;
+  } catch (err) {
+    await recordSyncLog('warn', `Cache export failed: ${err.message || err}`, {
+      phase: 'cache-export',
+      filename: CACHE_EXPORT_FILENAME
+    });
+    return false;
+  }
+}
+
 // 共享模糊搜索逻辑
 function performFuzzySearchInCache(query, l1Cache, subtreeCache) {
   if (!query) return [];

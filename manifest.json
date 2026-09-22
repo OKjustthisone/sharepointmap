@@ -9,7 +9,8 @@
     "cookies",
     "declarativeNetRequest",
     "contextMenus",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "downloads"
   ],
   "host_permissions": [
     "https://*/*",

@@ -136,9 +136,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       .catch((err) => {
         console.error(`Daily ${syncWindow.label} sync failed:`, err);
       })
-      .finally(() => {
+      .finally(async () => {
         // 无论成功还是失败，都安排下一次的每日同步。
         scheduleNextDailyAlarm();
+        // 自动刷新完成后自动导出缓存并覆盖旧文件
+        await exportSharePointCacheToFile();
       });
   } else if (alarm.name === LEGACY_WEEKLY_ALARM_NAME) {
     // 兼容已存在的旧 Alarm：启动时会清理，这里不再执行旧的同步逻辑。
@@ -150,20 +152,35 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync_all') {
     performAllSync({ mode: 'manual', notifyUpdates: true, configId: request.configId || '' })
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => sendResponse({ success: false, error: err.message || err }));
+      .then(async () => {
+        // 手动刷新完成后自动导出缓存并覆盖旧文件
+        await exportSharePointCacheToFile();
+        sendResponse({ success: true });
+      })
+      .catch(async (err) => {
+        await exportSharePointCacheToFile();
+        sendResponse({ success: false, error: err.message || err });
+      });
     return true; // 异步通道
   }
   if (request.action === 'sync_level1') {
     syncLevel1(request.configId)
-      .then((items) => sendResponse({ success: true, count: items.length }))
+      .then(async (items) => {
+        // 刷新完成后自动导出缓存并覆盖旧文件
+        await exportSharePointCacheToFile();
+        sendResponse({ success: true, count: items.length });
+      })
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true; // 异步通道
   }
   if (request.action === 'sync_subtree') {
     const { folderId, relativeUrl } = request;
     syncSubtree(folderId, relativeUrl, { mode: 'manual', notifyUpdates: true })
-      .then((nodeCount) => sendResponse({ success: true, count: nodeCount }))
+      .then(async (nodeCount) => {
+        // 手动刷新子目录（IVP Projects 内任意层级）完成后自动导出缓存并覆盖旧文件
+        await exportSharePointCacheToFile();
+        sendResponse({ success: true, count: nodeCount });
+      })
       .catch((err) => sendResponse({ success: false, error: err.message || err }));
     return true;
   }
