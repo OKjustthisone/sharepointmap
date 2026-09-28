@@ -150,6 +150,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 消息监听保留，以备将来需要
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'search_sharepoint_online') {
+    searchSharePointOnline(request.query)
+      .then((result) => sendResponse({ success: true, ...result }))
+      .catch((err) => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
   if (request.action === 'sync_all') {
     performAllSync({ mode: 'manual', notifyUpdates: true, configId: request.configId || '' })
       .then(async () => {
@@ -203,6 +209,113 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
+async function searchSharePointOnline(query) {
+  const searchText = typeof query === 'string' ? query.trim() : '';
+  if (!searchText) {
+    throw new Error('搜索内容不能为空。');
+  }
+
+  await migrateConfigsIfNeeded();
+  const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config']);
+  const currentConfigId = configData.current_config_id || '';
+  const activeConfig = currentConfigId
+    ? (configData.sp_configs || []).find(config => config.id === currentConfigId)
+    : configData.sp_config;
+
+  if (!activeConfig || !activeConfig.siteUrl || !activeConfig.libraryName) {
+    throw new Error('请先配置并选择有效的 SharePoint 站点与文库。');
+  }
+
+  await setupCookieDNRRule(activeConfig.siteUrl);
+
+  const escapedLibraryName = activeConfig.libraryName.replace(/'/g, "''");
+  const libraryUrl = `${activeConfig.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(escapedLibraryName)}')?$select=Id`;
+  const headers = {
+    'Accept': 'application/json;odata=nometadata',
+    'Content-Type': 'application/json'
+  };
+  const libraryResponse = await fetch(libraryUrl, { method: 'GET', headers });
+  if (!libraryResponse.ok) {
+    throw new Error(`读取文库信息失败 (HTTP ${libraryResponse.status})。请检查当前文库配置和登录状态。`);
+  }
+
+  const library = await libraryResponse.json();
+  const listId = String(library.Id || '').replace(/[{}]/g, '');
+  if (!listId) {
+    throw new Error('无法获取当前文库的标识，不能限定联网搜索范围。');
+  }
+
+  const escapedSearchText = searchText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const queryText = `"${escapedSearchText}" AND ListID:{${listId}} AND IsDocument:1`;
+  const selectedProperties = 'Title,Path,FileExtension,IsDocument,ListID,ListItemID';
+  const pageSize = 500;
+  const maxRows = 5000;
+  const results = [];
+  let totalRows = 0;
+
+  for (let startRow = 0; startRow < maxRows; startRow += pageSize) {
+    const searchUrl = new URL(`${activeConfig.siteUrl}/_api/search/query`);
+    searchUrl.searchParams.set('querytext', `'${queryText.replace(/'/g, "''")}'`);
+    searchUrl.searchParams.set('selectproperties', `'${selectedProperties}'`);
+    searchUrl.searchParams.set('rowlimit', String(pageSize));
+    searchUrl.searchParams.set('startrow', String(startRow));
+    searchUrl.searchParams.set('trimduplicates', 'false');
+
+    const response = await fetch(searchUrl.toString(), { method: 'GET', headers });
+    if (!response.ok) {
+      throw new Error(`SharePoint 联网搜索失败 (HTTP ${response.status})。请确认您有权访问该文库。`);
+    }
+
+    const data = await response.json();
+    const queryResult = data?.PrimaryQueryResult
+      || data?.d?.query?.PrimaryQueryResult
+      || data?.query?.PrimaryQueryResult;
+    const relevantResults = queryResult?.RelevantResults;
+    const table = relevantResults?.Table;
+    const rows = table?.Rows?.results || table?.Rows || [];
+    totalRows = Number(relevantResults?.TotalRows ?? totalRows);
+
+    rows.forEach(row => {
+      const cells = row?.Cells?.results || row?.Cells || [];
+      const properties = {};
+      cells.forEach(cell => {
+        if (cell?.Key) properties[String(cell.Key).toLowerCase()] = cell.Value;
+      });
+
+      const itemUrl = properties.path;
+      if (!itemUrl) return;
+
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(itemUrl, activeConfig.siteUrl);
+      } catch (err) {
+        return;
+      }
+      const relativeUrl = parsedUrl.pathname;
+      let name = relativeUrl.split('/').pop() || properties.title || '';
+      try {
+        name = decodeURIComponent(name);
+      } catch (err) {
+        // Keep the URL-encoded name if SharePoint returns malformed escaping.
+      }
+      if (!name) return;
+
+      results.push({
+        id: `${listId}:${properties.listitemid || relativeUrl}`,
+        name,
+        type: 'file',
+        relativeUrl,
+        webUrl: parsedUrl.href,
+        fileExtension: properties.fileextension || ''
+      });
+    });
+
+    if (rows.length < pageSize || startRow + rows.length >= totalRows) break;
+  }
+
+  return { results, truncated: totalRows > maxRows };
+}
 
 // 其他扩展页面直接修改提醒状态时，也及时同步徽标。
 chrome.storage.onChanged.addListener((changes, namespace) => {

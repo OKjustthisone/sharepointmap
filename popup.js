@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const syncTimeSpan = document.getElementById('syncTime');
   const toastContainer = document.getElementById('toastContainer');
   const l1FilterSelect = document.getElementById('l1FilterSelect');
-  const filterChips = document.querySelectorAll('.filter-chip');
+  const filterChips = document.querySelectorAll('.filter-chip[data-filter]');
   const tabsContainer = document.getElementById('tabsContainer');
   const notificationsBtn = document.getElementById('notificationsBtn');
   const notificationBellDot = document.getElementById('notificationBellDot');
@@ -35,6 +35,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 全局数据状态缓存与过滤器状态
   let activeFilter = 'all';
   let activeL1Path = 'all';
+  let onlineSearchQuery = '';
+  let onlineSearchResults = [];
   let spConfig = null;
   let spConfigs = [];
   let currentConfigId = '';
@@ -198,9 +200,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  const onlineSearchBtn = document.getElementById('onlineSearchBtn');
+  onlineSearchBtn.addEventListener('click', () => {
+    const query = searchInput.value.trim();
+    if (!query) {
+      showToast('请先输入搜索内容', 'alert', true);
+      searchInput.focus();
+      return;
+    }
+
+    onlineSearchBtn.disabled = true;
+    onlineSearchBtn.innerText = '搜索中…';
+    chrome.runtime.sendMessage({ action: 'search_sharepoint_online', query }, (response) => {
+      onlineSearchBtn.disabled = false;
+      onlineSearchBtn.innerText = '搜全站';
+
+      if (chrome.runtime.lastError) {
+        showToast(`联网搜索失败：${chrome.runtime.lastError.message}`, 'alert', true);
+        return;
+      }
+      if (!response || !response.success) {
+        showToast(`联网搜索失败：${response?.error || '未知错误'}`, 'alert', true);
+        return;
+      }
+
+      onlineSearchQuery = query.toLowerCase();
+      onlineSearchResults = response.results || [];
+      performSearch(query.toLowerCase());
+      showToast(
+        response.truncated
+          ? `联网搜索完成，结果超过 5000 条，仅显示前 5000 条`
+          : `联网搜索完成，找到 ${onlineSearchResults.length} 个结果`,
+        'check'
+      );
+    });
+  });
+
   // 搜索输入过滤
   searchInput.addEventListener('input', () => {
     const query = searchInput.value.trim().toLowerCase();
+    if (query !== onlineSearchQuery) {
+      onlineSearchQuery = '';
+      onlineSearchResults = [];
+    }
     saveUIState(); // 保存状态
     if (query) {
       clearSearchBtn.classList.remove('hide');
@@ -215,6 +257,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 清除搜索
   clearSearchBtn.addEventListener('click', () => {
     searchInput.value = '';
+    onlineSearchQuery = '';
+    onlineSearchResults = [];
     clearSearchBtn.classList.add('hide');
     searchResultsSection.classList.add('hide');
     defaultViews.classList.remove('hide');
@@ -1279,6 +1323,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 调用共享模糊搜索逻辑
     const matchedItems = performFuzzySearchInCache(query, l1Cache, subtreeCache);
+    if (query === onlineSearchQuery && onlineSearchResults.length > 0) {
+      const uniqueItems = new Map(matchedItems.map(item => [item.id || item.relativeUrl, item]));
+      onlineSearchResults.forEach(item => uniqueItems.set(item.id || item.relativeUrl, item));
+      matchedItems.splice(0, matchedItems.length, ...uniqueItems.values());
+    }
 
     // B. 进行过滤器筛选
     const filtered = matchedItems.filter(item => {

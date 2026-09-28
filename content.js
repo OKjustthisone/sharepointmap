@@ -91,6 +91,43 @@ function showSearchResultsModal(query, results, l1Directories) {
 
   selectWrapper.appendChild(l1Select);
   row1.appendChild(selectWrapper);
+
+  const onlineSearchButton = document.createElement('button');
+  onlineSearchButton.className = 'sp-map-filter-chip sp-map-online-search-button';
+  onlineSearchButton.innerText = '搜全站';
+  onlineSearchButton.title = '在当前选中的 SharePoint 站点和文库中联网搜索';
+  onlineSearchButton.addEventListener('click', () => {
+    onlineSearchButton.disabled = true;
+    onlineSearchButton.innerText = '搜索中…';
+    info.innerText = '正在 SharePoint 文库中联网搜索…';
+
+    chrome.runtime.sendMessage({ action: 'search_sharepoint_online', query }, (response) => {
+      onlineSearchButton.disabled = false;
+      onlineSearchButton.innerText = '搜全站';
+
+      if (chrome.runtime.lastError) {
+        showToastMessage(`❌ 联网搜索失败：${chrome.runtime.lastError.message}`);
+        renderList();
+        return;
+      }
+      if (!response || !response.success) {
+        showToastMessage(`❌ 联网搜索失败：${response?.error || '未知错误'}`);
+        renderList();
+        return;
+      }
+
+      const resultMap = new Map(results.map(item => [item.id || item.relativeUrl, item]));
+      response.results.forEach(item => resultMap.set(item.id || item.relativeUrl, item));
+      results = Array.from(resultMap.values());
+      renderList();
+      if (response.truncated) {
+        showToastMessage('搜索结果超过 5000 条，仅显示前 5000 条。');
+      } else {
+        showToastMessage(`🌐 联网搜索完成，找到 ${response.results.length} 个结果。`);
+      }
+    });
+  });
+  row1.appendChild(onlineSearchButton);
   filterBar.appendChild(row1);
 
   // ================= 第二行：文件夹/各类文件过滤按钮 =================

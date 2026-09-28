@@ -164,6 +164,17 @@
   box-shadow: 0 0 10px rgba(0, 240, 255, 0.08);
 }
 
+.sp-map-online-search-button {
+  white-space: nowrap;
+  color: #00f0ff;
+  border-color: rgba(0, 240, 255, 0.25);
+}
+
+.sp-map-online-search-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .sp-map-modal-body {
   flex: 1;
   overflow-y: auto;

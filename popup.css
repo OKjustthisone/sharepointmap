@@ -990,6 +990,17 @@ body {
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
 }
 
+.online-search-btn {
+  flex: 0 0 auto;
+  color: var(--primary-cyan);
+  border-color: rgba(0, 240, 255, 0.3);
+}
+
+.online-search-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 /* 下拉选择框过滤样式 */
 .filter-select-wrapper {
   position: relative;
