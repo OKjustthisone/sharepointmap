@@ -190,6 +190,7 @@ function buildFileUpdateEvent(item, eventType, config) {
     name: item.name,
     relativeUrl: item.relativeUrl,
     webUrl: item.webUrl,
+    modifiedBy: item.modifiedBy || '',
     modifiedAt: item.modifiedAt || '',
     createdAt: item.createdAt || '',
     eventType,
@@ -254,6 +255,7 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
       type: 'file',
       relativeUrl: event.relativeUrl,
       webUrl: event.webUrl,
+      modifiedBy: event.modifiedBy || '',
       eventType: event.eventType,
       modifiedAt: event.modifiedAt || '',
       createdAt: event.createdAt || '',
@@ -654,7 +656,7 @@ async function fetchLibraryFlatSnapshot(siteUrl, libraryName) {
   };
 
   // 一次请求即可返回整个文档库的扁平清单（含全部 URL），超过 5000 项时自动分页
-  let url = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$top=5000&$select=UniqueId,FileLeafRef,FileRef,FileSystemObjectType,Modified,Created`;
+  let url = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$top=5000&$select=UniqueId,FileLeafRef,FileRef,FileSystemObjectType,Modified,Created,Editor/Title&$expand=Editor`;
   const allItems = [];
   let page = 0;
   const MAX_PAGES = 30; // 30 * 5000 ≈ 15 万项上限
@@ -791,7 +793,8 @@ function rebuildTreeFromFlatItems(flatItems, l1FolderRelativeUrl, baseUrl) {
       relativeUrl: newPath,
       webUrl: `${baseUrl}${newPath}`,
       modifiedAt: getItemModifiedAt(raw),
-      createdAt: getItemCreatedAt(raw)
+      createdAt: getItemCreatedAt(raw),
+      modifiedBy: raw.Editor?.Title || ''
     };
 
     const parentPath = newPath.slice(0, newPath.lastIndexOf('/'));
@@ -974,7 +977,7 @@ async function syncSubtreeIncremental(
       if (modifiedBefore !== null) {
         modifiedFilters.push(`Modified le datetime'${new Date(modifiedBefore).toISOString()}'`);
       }
-      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=${modifiedFilters.join(' and ')}&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified&$top=5000`;
+      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=${modifiedFilters.join(' and ')}&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified,Editor/Title&$expand=Editor&$top=5000`;
 
       try {
         const res = await fetch(modifiedItemsUrl, { method: 'GET', headers });
@@ -1002,7 +1005,8 @@ async function syncSubtreeIncremental(
                 relativeUrl: newPath,
                 webUrl: `${baseUrl}${newPath}`,
                 modifiedAt: getItemModifiedAt(item),
-                createdAt: getItemCreatedAt(item)
+                createdAt: getItemCreatedAt(item),
+                modifiedBy: item.Editor?.Title || ''
               };
               const previousItem = oldItemsById.get(item.UniqueId);
               const currentModifiedMs = Date.parse(currentItem.modifiedAt);

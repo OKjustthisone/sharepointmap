@@ -770,7 +770,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const fileLink = document.createElement('a');
       fileLink.className = 'update-notification-file-link';
-      fileLink.innerText = notification.name || '未命名文件';
+      const fileName = notification.name || '未命名文件';
+      fileLink.innerText = notification.eventType === 'modified' && notification.modifiedBy
+        ? `${fileName}（${notification.modifiedBy}）`
+        : fileName;
       fileLink.title = '点击直接打开文件';
       fileLink.href = getOnlineViewUrl(notification.webUrl);
       fileLink.target = '_blank';
@@ -787,7 +790,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const description = document.createElement('div');
       description.className = 'update-notification-description';
-      description.innerText = `${notification.eventType === 'uploaded' ? '已上传到' : '最后修改于'} ${formatUpdateNotificationTime(notification)}`;
+      description.innerText = `${notification.eventType === 'uploaded' ? '已上传到' : '修改于'} ${formatUpdateNotificationTime(notification)}`;
       body.appendChild(description);
 
       const path = document.createElement('div');
