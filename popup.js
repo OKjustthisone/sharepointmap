@@ -31,6 +31,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const notificationFileTypeDocBtn = document.getElementById('notificationFileTypeDocBtn');
   const notificationFileTypeFilter = document.getElementById('notificationFileTypeFilter');
   const markNotificationsReadBtn = document.getElementById('markNotificationsReadBtn');
+  const notificationPagination = document.getElementById('notificationPagination');
+  const notificationPrevPage = document.getElementById('notificationPrevPage');
+  const notificationNextPage = document.getElementById('notificationNextPage');
+  const notificationPageInfo = document.getElementById('notificationPageInfo');
 
   // 全局数据状态缓存与过滤器状态
   let activeFilter = 'all';
@@ -48,6 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   let isNotificationsPanelOpen = false;
   let activeNotificationL1Path = 'all';
   let activeNotificationFileType = 'all';
+  let notificationPage = 0;
+  const NOTIFICATIONS_PER_PAGE = 30;
 
   function svgIcon(name, className = '') {
     const extraClass = className ? ` ${className}` : '';
@@ -86,6 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('notificationL1Filter')?.addEventListener('change', (event) => {
     activeNotificationL1Path = event.target.value;
+    notificationPage = 0;
     renderUpdateNotifications();
   });
 
@@ -99,6 +106,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   notificationFileTypeDocBtn?.addEventListener('click', () => {
     setActiveNotificationFileType('word');
+  });
+
+  notificationPrevPage.addEventListener('click', () => {
+    if (notificationPage > 0) {
+      notificationPage--;
+      renderUpdateNotifications();
+    }
+  });
+
+  notificationNextPage.addEventListener('click', () => {
+    const pageCount = Math.ceil(getVisibleUpdateNotifications().length / NOTIFICATIONS_PER_PAGE);
+    if (notificationPage < pageCount - 1) {
+      notificationPage++;
+      renderUpdateNotifications();
+    }
   });
 
   markNotificationsReadBtn.addEventListener('click', async () => {
@@ -452,6 +474,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         isNotificationsPanelOpen = false;
         activeNotificationL1Path = 'all';
         activeNotificationFileType = 'all';
+        notificationPage = 0;
         
         // 重新初始化并加载新站点的数据
         await initApp();
@@ -598,6 +621,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function setActiveNotificationFileType(fileType) {
     activeNotificationFileType = fileType;
+    notificationPage = 0;
     populateNotificationFileTypeFilter();
     renderUpdateNotifications();
   }
@@ -718,6 +742,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     notificationsBtn.setAttribute('aria-expanded', String(isNotificationsPanelOpen));
   }
 
+  function showNotificationFileTooltip(anchor, text) {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'notification-file-tooltip';
+    tooltip.innerText = text;
+    tooltip.style.maxWidth = `${Math.max(120, Math.min(360, window.innerWidth - 16))}px`;
+    document.body.appendChild(tooltip);
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - tooltipRect.width - 8));
+    let top = anchorRect.bottom + 5;
+    if (top + tooltipRect.height > window.innerHeight - 8) {
+      top = anchorRect.top - tooltipRect.height - 5;
+    }
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${Math.max(8, top)}px`;
+    return tooltip;
+  }
+
   function renderUpdateNotifications() {
     if (!updateNotificationsSection || !updateNotificationsList) return;
 
@@ -733,6 +776,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateNotificationsSection.classList.remove('hide');
 
     if (visibleNotifications.length === 0) {
+      notificationPage = 0;
+      notificationPagination.classList.add('hide');
       updateNotificationCount.innerText = '0 条匹配';
       markNotificationsReadBtn.disabled = true;
 
@@ -743,13 +788,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    const pageCount = Math.ceil(visibleNotifications.length / NOTIFICATIONS_PER_PAGE);
+    notificationPage = Math.min(notificationPage, pageCount - 1);
+    notificationPagination.classList.toggle('hide', pageCount <= 1);
+    notificationPrevPage.disabled = notificationPage === 0;
+    notificationNextPage.disabled = notificationPage >= pageCount - 1;
+    notificationPageInfo.innerText = `第 ${notificationPage + 1}/${pageCount} 页 · 共 ${visibleNotifications.length} 条`;
+
     const unreadCount = visibleNotifications.filter(item => !item.read).length;
     updateNotificationCount.innerText = unreadCount > 0
       ? `${unreadCount} 条待查看`
       : `${visibleNotifications.length} 条记录`;
     markNotificationsReadBtn.disabled = unreadCount === 0;
 
-    visibleNotifications.slice(0, 30).forEach(notification => {
+    const pageStart = notificationPage * NOTIFICATIONS_PER_PAGE;
+    visibleNotifications.slice(pageStart, pageStart + NOTIFICATIONS_PER_PAGE).forEach(notification => {
       const card = document.createElement('article');
       card.className = `update-notification-card ${notification.read ? 'is-read' : 'is-unread'} ${notification.eventType}`;
 
@@ -771,13 +824,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       const fileLink = document.createElement('a');
       fileLink.className = 'update-notification-file-link';
       const fileName = notification.name || '未命名文件';
-      fileLink.innerText = notification.eventType === 'modified' && notification.modifiedBy
+      const displayName = notification.eventType === 'modified' && notification.modifiedBy
         ? `${fileName}（${notification.modifiedBy}）`
         : fileName;
-      fileLink.title = '点击直接打开文件';
+      fileLink.dataset.fullName = fileName;
+      const fileLabel = document.createElement('span');
+      fileLabel.className = 'update-notification-file-label';
+      fileLabel.innerText = displayName;
+      fileLink.appendChild(fileLabel);
+      fileLink.setAttribute('aria-label', displayName);
       fileLink.href = getOnlineViewUrl(notification.webUrl);
       fileLink.target = '_blank';
       fileLink.rel = 'noopener noreferrer';
+      let fileTooltip = null;
+      const showTooltip = () => {
+        if (!fileTooltip) fileTooltip = showNotificationFileTooltip(fileLink, fileName);
+      };
+      const hideTooltip = () => {
+        fileTooltip?.remove();
+        fileTooltip = null;
+      };
+      fileLink.addEventListener('mouseenter', showTooltip);
+      fileLink.addEventListener('mouseleave', hideTooltip);
+      fileLink.addEventListener('focus', showTooltip);
+      fileLink.addEventListener('blur', hideTooltip);
       fileLink.addEventListener('click', () => {
         if (!notification.read) {
           markFileUpdateNotificationsRead([notification.id]).catch(err => {
