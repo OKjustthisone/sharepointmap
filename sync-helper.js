@@ -198,15 +198,72 @@ function buildFileUpdateEvent(item, eventType, config) {
   };
 }
 
+function getSharePointEditorName(item) {
+  const editors = [item?.Editor, item?.ModifiedBy, item?.Modified_x0020_By];
+  for (const editor of editors) {
+    if (typeof editor === 'string' && editor) return editor;
+    const name = editor?.Title || editor?.LookupValue || editor?.Name;
+    if (name) return name;
+  }
+  return '';
+}
+
+async function enrichFileUpdateNotificationAuthors(configId, items) {
+  const authorByFileId = new Map();
+  (Array.isArray(items) ? items : []).forEach(item => {
+    const fileId = String(item?.UniqueId || '').replace(/[{}]/g, '').toLowerCase();
+    const author = getSharePointEditorName(item);
+    if (fileId && author) authorByFileId.set(fileId, author);
+  });
+  if (authorByFileId.size === 0) return;
+
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  let changed = false;
+  const updated = notifications.map(notification => {
+    if (
+      notification.configId !== (configId || 'legacy') ||
+      notification.eventType !== 'modified' ||
+      notification.modifiedBy
+    ) {
+      return notification;
+    }
+
+    const fileId = String(notification.fileId || '').replace(/[{}]/g, '').toLowerCase();
+    const modifiedBy = authorByFileId.get(fileId);
+    if (!modifiedBy) return notification;
+    changed = true;
+    return { ...notification, modifiedBy };
+  });
+
+  if (changed) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
+  }
+}
+
 async function updateFileUpdateBadge() {
   if (!chrome.action || typeof chrome.action.setBadgeText !== 'function') return;
 
   try {
-    const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+    const data = await chrome.storage.local.get([
+      FILE_UPDATE_NOTIFICATIONS_KEY,
+      'sp_configs',
+      'current_config_id',
+      'sp_config'
+    ]);
     const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
       ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
       : [];
-    const unreadCount = notifications.filter(item => !item.read).length;
+    const currentConfigId = data.current_config_id || '';
+    const activeConfig = currentConfigId
+      ? (data.sp_configs || []).find(config => config.id === currentConfigId)
+      : data.sp_config;
+    const visibleNotifications = currentConfigId || activeConfig
+      ? notifications.filter(item => item.configId === (currentConfigId || 'legacy'))
+      : notifications;
+    const unreadCount = visibleNotifications.filter(item => !item.read).length;
     const badgeText = unreadCount === 0 ? '' : (unreadCount > 99 ? '99+' : String(unreadCount));
 
     await chrome.action.setBadgeText({ text: badgeText });
@@ -237,13 +294,22 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
   }
 
   const existingKeys = new Set(recentExisting.map(item => item.dedupeKey).filter(Boolean));
+  const existingByKey = new Map(recentExisting.map(item => [item.dedupeKey, item]).filter(([key]) => key));
   const effectiveConfigId = configId || 'legacy';
   const detectedAt = Date.now();
   const newNotifications = [];
+  let enrichedExisting = false;
 
   events.forEach(event => {
     const dedupeKey = [effectiveConfigId, event.fileId, event.eventType, event.eventTime].join('|');
-    if (existingKeys.has(dedupeKey)) return;
+    if (existingKeys.has(dedupeKey)) {
+      const existingNotification = existingByKey.get(dedupeKey);
+      if (event.modifiedBy && existingNotification && !existingNotification.modifiedBy) {
+        existingNotification.modifiedBy = event.modifiedBy;
+        enrichedExisting = true;
+      }
+      return;
+    }
 
     const notification = {
       id: `file_update_${effectiveConfigId}_${event.fileId}_${event.eventType}_${event.eventTime}`,
@@ -268,6 +334,9 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
   });
 
   if (newNotifications.length === 0) {
+    if (enrichedExisting) {
+      await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: recentExisting });
+    }
     await updateFileUpdateBadge();
     return [];
   }
@@ -343,7 +412,14 @@ async function removeFileUpdateNotificationsForConfig(configId) {
 
 // 核心配置迁移函数
 async function migrateConfigsIfNeeded() {
-  const data = await chrome.storage.local.get(['sp_config', 'sp_configs', 'current_config_id', 'l1_cache', 'favorites']);
+  const data = await chrome.storage.local.get([
+    'sp_config',
+    'sp_configs',
+    'current_config_id',
+    'l1_cache',
+    'favorites',
+    'sharepoint_weburl_hash_encoding_v1'
+  ]);
   const updates = {};
 
   if (Array.isArray(data.sp_configs)) {
@@ -396,6 +472,27 @@ async function migrateConfigsIfNeeded() {
     await chrome.storage.local.set(updates);
     console.log('[Migration] Normalized SharePoint configuration settings successfully.');
   }
+
+  if (!data.sharepoint_weburl_hash_encoding_v1) {
+    const allStorage = await chrome.storage.local.get(null);
+    const urlUpdates = {};
+    Object.keys(allStorage).forEach(key => {
+      if (
+        key === 'favorites' ||
+        key.startsWith('favorites_') ||
+        key === 'file_update_notifications' ||
+        key === 'l1_cache' ||
+        key.startsWith('l1_cache_') ||
+        key.startsWith('subtree_cache_')
+      ) {
+        const value = allStorage[key];
+        if (normalizeStoredWebUrls(value)) urlUpdates[key] = value;
+      }
+    });
+    urlUpdates.sharepoint_weburl_hash_encoding_v1 = true;
+    await chrome.storage.local.set(urlUpdates);
+    console.log('[Migration] Encoded literal hash characters in stored SharePoint web URLs.');
+  }
 }
 
 // 立即清理历史所有 DNR 规则，恢复正常的浏览器 SharePoint 网页访问！
@@ -425,6 +522,37 @@ function cleanRelativePathUrl(siteUrl, relativePath, apiType) {
   const encodedPath = encodeURIComponent(escapedPath);
   // 3. 拼接 API 地址 (使用 GetFolderByServerRelativePath API)
   return `${siteUrl}/_api/web/GetFolderByServerRelativePath(decodedurl='${encodedPath}')/${apiType}`;
+}
+
+function buildSharePointWebUrl(baseUrl, serverRelativeUrl) {
+  return `${baseUrl}${String(serverRelativeUrl || '').replace(/#/g, '%23')}`;
+}
+
+function normalizeStoredWebUrls(value) {
+  let changed = false;
+  const normalizeItems = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach(item => {
+      if (typeof item?.webUrl === 'string' && item.webUrl.includes('#')) {
+        item.webUrl = item.webUrl.replace(/#/g, '%23');
+        changed = true;
+      }
+    });
+  };
+
+  if (Array.isArray(value)) {
+    normalizeItems(value);
+  } else if (value && typeof value === 'object') {
+    normalizeItems(value.items);
+    if (value.tree && typeof value.tree === 'object') {
+      Object.values(value.tree).forEach(node => {
+        normalizeItems(node?.folders);
+        normalizeItems(node?.files);
+      });
+    }
+  }
+
+  return changed;
 }
 
 // 核心函数：使用 url 参数读取 Cookie（自动获取父域名如 .sharepoint.com 的授权 Cookie）
@@ -567,7 +695,7 @@ async function syncLevel1(configId) {
         name: item.Name,
         type: 'folder',
         relativeUrl: item.ServerRelativeUrl,
-        webUrl: `${siteUrl.split('/sites/')[0]}${item.ServerRelativeUrl}`,
+        webUrl: buildSharePointWebUrl(siteUrl.split('/sites/')[0], item.ServerRelativeUrl),
         modifiedAt: getItemModifiedAt(item),
         createdAt: getItemCreatedAt(item),
         level: 1
@@ -581,7 +709,7 @@ async function syncLevel1(configId) {
         name: item.Name,
         type: 'file',
         relativeUrl: item.ServerRelativeUrl,
-        webUrl: `${siteUrl.split('/sites/')[0]}${item.ServerRelativeUrl}`,
+        webUrl: buildSharePointWebUrl(siteUrl.split('/sites/')[0], item.ServerRelativeUrl),
         modifiedAt: getItemModifiedAt(item),
         createdAt: getItemCreatedAt(item),
         level: 1
@@ -639,7 +767,7 @@ async function syncLevel1(configId) {
 const LIBRARY_SNAPSHOT_REUSE_MS = 60 * 1000;
 let libraryFlatSnapshotCache = null;
 
-async function fetchLibraryFlatSnapshot(siteUrl, libraryName) {
+async function fetchLibraryFlatSnapshot(siteUrl, libraryName, configId = '') {
   const cacheKey = `${siteUrl}|${libraryName}`;
   const now = Date.now();
   if (
@@ -647,6 +775,7 @@ async function fetchLibraryFlatSnapshot(siteUrl, libraryName) {
     libraryFlatSnapshotCache.key === cacheKey &&
     now - libraryFlatSnapshotCache.at < LIBRARY_SNAPSHOT_REUSE_MS
   ) {
+    await enrichFileUpdateNotificationAuthors(configId, libraryFlatSnapshotCache.items);
     return libraryFlatSnapshotCache.items;
   }
 
@@ -676,6 +805,7 @@ async function fetchLibraryFlatSnapshot(siteUrl, libraryName) {
   }
 
   libraryFlatSnapshotCache = { key: cacheKey, items: allItems, at: Date.now() };
+  await enrichFileUpdateNotificationAuthors(configId, allItems);
   if (page > 1) {
     console.log(`[SharePoint Map] Library snapshot fetched in ${page} pages (${allItems.length} items).`);
   }
@@ -733,7 +863,7 @@ async function crawlSubfolderTree(siteUrl, libraryName, l1FolderRelativeUrl, bas
             name: item.Name,
             type: 'folder',
             relativeUrl: item.ServerRelativeUrl,
-            webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+            webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
             modifiedAt: getItemModifiedAt(item),
             createdAt: getItemCreatedAt(item)
           };
@@ -745,7 +875,7 @@ async function crawlSubfolderTree(siteUrl, libraryName, l1FolderRelativeUrl, bas
             name: item.Name,
             type: 'file',
             relativeUrl: item.ServerRelativeUrl,
-            webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+            webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
             modifiedAt: getItemModifiedAt(item),
             createdAt: getItemCreatedAt(item)
           };
@@ -791,10 +921,10 @@ function rebuildTreeFromFlatItems(flatItems, l1FolderRelativeUrl, baseUrl) {
       name,
       type: isFolder ? 'folder' : 'file',
       relativeUrl: newPath,
-      webUrl: `${baseUrl}${newPath}`,
+      webUrl: buildSharePointWebUrl(baseUrl, newPath),
       modifiedAt: getItemModifiedAt(raw),
       createdAt: getItemCreatedAt(raw),
-      modifiedBy: raw.Editor?.Title || ''
+      modifiedBy: getSharePointEditorName(raw)
     };
 
     const parentPath = newPath.slice(0, newPath.lastIndexOf('/'));
@@ -820,6 +950,7 @@ function isCacheItemEqual(a, b) {
     a.name === b.name &&
     a.type === b.type &&
     a.relativeUrl === b.relativeUrl &&
+    a.webUrl === b.webUrl &&
     a.modifiedAt === b.modifiedAt &&
     a.createdAt === b.createdAt;
 }
@@ -984,6 +1115,7 @@ async function syncSubtreeIncremental(
         if (res.ok) {
           const data = await res.json();
           const items = data.value || [];
+          await enrichFileUpdateNotificationAuthors(targetConfigId, items);
           
           items.forEach(item => {
             const newPath = item.FileRef;
@@ -1003,10 +1135,10 @@ async function syncSubtreeIncremental(
                 name: item.FileLeafRef || getFileNameFromPath(newPath),
                 type: 'file',
                 relativeUrl: newPath,
-                webUrl: `${baseUrl}${newPath}`,
+                webUrl: buildSharePointWebUrl(baseUrl, newPath),
                 modifiedAt: getItemModifiedAt(item),
                 createdAt: getItemCreatedAt(item),
-                modifiedBy: item.Editor?.Title || ''
+                modifiedBy: getSharePointEditorName(item)
               };
               const previousItem = oldItemsById.get(item.UniqueId);
               const currentModifiedMs = Date.parse(currentItem.modifiedAt);
@@ -1128,7 +1260,7 @@ async function syncSubtreeIncremental(
                   name: item.Name,
                   type: 'folder',
                   relativeUrl: item.ServerRelativeUrl,
-                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                  webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
                   modifiedAt: getItemModifiedAt(item),
                   createdAt: getItemCreatedAt(item)
                 };
@@ -1141,7 +1273,7 @@ async function syncSubtreeIncremental(
                 name: item.Name,
                 type: 'file',
                 relativeUrl: item.ServerRelativeUrl,
-                webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
                 modifiedAt: getItemModifiedAt(item),
                 createdAt: getItemCreatedAt(item)
               };
@@ -1233,7 +1365,7 @@ async function syncSubtreeIncremental(
                     name: item.Name,
                     type: 'folder',
                     relativeUrl: item.ServerRelativeUrl,
-                    webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                    webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
                     modifiedAt: getItemModifiedAt(item),
                     createdAt: getItemCreatedAt(item)
                   };
@@ -1246,7 +1378,7 @@ async function syncSubtreeIncremental(
                   name: item.Name,
                   type: 'file',
                   relativeUrl: item.ServerRelativeUrl,
-                  webUrl: `${baseUrl}${item.ServerRelativeUrl}`,
+                  webUrl: buildSharePointWebUrl(baseUrl, item.ServerRelativeUrl),
                   modifiedAt: getItemModifiedAt(item),
                   createdAt: getItemCreatedAt(item)
                 };
@@ -1861,7 +1993,7 @@ async function performAllSync(options = {}) {
 
             // 手动模式下共享同一份文档库扁平快照，避免多个收藏子目录重复请求
             const snapshotItems = syncMode === 'manual' && l1Folders.length > 0
-              ? await fetchLibraryFlatSnapshot(config.siteUrl, config.libraryName)
+              ? await fetchLibraryFlatSnapshot(config.siteUrl, config.libraryName, config.id)
               : null;
 
             for (const favFolder of l1Folders) {
@@ -1963,12 +2095,12 @@ const EXPORT_URL_PREFIX = `${EXPORT_SITE_PATH}/${EXPORT_LIBRARY_NAME}`;
 function escapeExportUrl(value) {
   if (typeof value !== 'string' || !value) return value;
   try {
-    return encodeURI(decodeURI(value));
+    return encodeURI(decodeURI(value)).replace(/#/g, '%23');
   } catch (err) {
     try {
-      return encodeURI(value);
+      return encodeURI(value).replace(/#/g, '%23');
     } catch (e) {
-      return value;
+      return value.replace(/#/g, '%23');
     }
   }
 }

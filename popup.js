@@ -80,13 +80,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   alertActionBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   notificationsBtn.addEventListener('click', () => {
-    const availableNotifications = getCurrentConfigUpdateNotifications();
-    if (availableNotifications.length === 0) {
-      showToast('暂无文件更新提醒', 'bell');
-      return;
-    }
-
     isNotificationsPanelOpen = !isNotificationsPanelOpen;
+    chrome.storage.local.set({ notification_panel_open: isNotificationsPanelOpen })
+      .catch(err => console.error('Failed to save notification panel state:', err));
     renderUpdateNotifications();
   });
 
@@ -306,9 +302,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     await migrateConfigsIfNeeded();
 
     // B. 获取配置和当前激活的配置 ID
-    const configData = await chrome.storage.local.get(['sp_configs', 'current_config_id', 'sp_config', 'ui_state']);
+    const configData = await chrome.storage.local.get([
+      'sp_configs',
+      'current_config_id',
+      'sp_config',
+      'ui_state',
+      'notification_panel_open'
+    ]);
     spConfigs = configData.sp_configs || [];
     currentConfigId = configData.current_config_id || '';
+    isNotificationsPanelOpen = configData.notification_panel_open === true;
     
     if (!currentConfigId && configData.sp_config) {
       spConfig = configData.sp_config;
@@ -450,7 +453,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function renderTabs() {
-    if (spConfigs.length <= 1) {
+    const configsToRender = spConfigs.length > 0
+      ? spConfigs
+      : (spConfig ? [{ ...spConfig, id: currentConfigId || 'legacy' }] : []);
+    if (configsToRender.length === 0) {
       tabsContainer.classList.add('hide');
       return;
     }
@@ -458,20 +464,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     tabsContainer.classList.remove('hide');
     tabsContainer.innerHTML = '';
 
-    spConfigs.forEach(config => {
+    configsToRender.forEach(config => {
       const btn = document.createElement('button');
-      btn.className = `tab-btn ${config.id === currentConfigId ? 'active' : ''}`;
-      btn.innerText = config.name || '未命名站点';
+      const configId = config.id || 'legacy';
+      const unreadCount = updateNotifications.filter(item => (
+        item.configId === configId && !item.read
+      )).length;
+      btn.className = `tab-btn ${configId === (currentConfigId || 'legacy') ? 'active' : ''}`;
+      const name = document.createElement('span');
+      name.innerText = config.name || config.libraryName || '未命名站点';
+      btn.appendChild(name);
+      if (unreadCount > 0) {
+        const count = document.createElement('span');
+        count.className = 'tab-notification-count';
+        count.innerText = unreadCount > 99 ? '99+' : String(unreadCount);
+        count.title = `${unreadCount} 条未读更新`;
+        btn.appendChild(count);
+      }
       btn.title = `${config.siteUrl} (${config.libraryName})`;
       btn.addEventListener('click', async () => {
-        if (config.id === currentConfigId) return;
+        if (!spConfigs.some(item => item.id === config.id) || config.id === currentConfigId) return;
         currentConfigId = config.id;
         await chrome.storage.local.set({ current_config_id: config.id });
         
         // 切换配置时清除界面部分状态
         expandedState = {};
         isTreeExpanded = false;
-        isNotificationsPanelOpen = false;
         activeNotificationL1Path = 'all';
         activeNotificationFileType = 'all';
         notificationPage = 0;

@@ -319,7 +319,12 @@ async function searchSharePointOnline(query) {
 
 // 其他扩展页面直接修改提醒状态时，也及时同步徽标。
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'local' && changes[FILE_UPDATE_NOTIFICATIONS_KEY]) {
+  if (namespace === 'local' && (
+    changes[FILE_UPDATE_NOTIFICATIONS_KEY]
+    || changes.current_config_id
+    || changes.sp_configs
+    || changes.sp_config
+  )) {
     updateFileUpdateBadge();
   }
 });

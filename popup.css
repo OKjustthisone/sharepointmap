@@ -1105,6 +1105,9 @@ body {
 }
 
 .tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: none;
   border: none;
   color: var(--text-muted);
@@ -1115,6 +1118,21 @@ body {
   white-space: nowrap;
   position: relative;
   transition: color 0.2s ease;
+}
+
+.tab-notification-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: rgba(255, 46, 99, 0.2);
+  color: #ff91a9;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .tab-btn:hover {
