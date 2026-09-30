@@ -842,15 +842,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const fileLink = document.createElement('a');
       fileLink.className = 'update-notification-file-link';
       const fileName = notification.name || '未命名文件';
-      const displayName = notification.eventType === 'modified' && notification.modifiedBy
-        ? `${fileName}（${notification.modifiedBy}）`
-        : fileName;
       fileLink.dataset.fullName = fileName;
       const fileLabel = document.createElement('span');
       fileLabel.className = 'update-notification-file-label';
-      fileLabel.innerText = displayName;
+      fileLabel.innerText = fileName;
       fileLink.appendChild(fileLabel);
-      fileLink.setAttribute('aria-label', displayName);
+      fileLink.setAttribute('aria-label', fileName);
       fileLink.href = getOnlineViewUrl(notification.webUrl);
       fileLink.target = '_blank';
       fileLink.rel = 'noopener noreferrer';
@@ -878,7 +875,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const description = document.createElement('div');
       description.className = 'update-notification-description';
-      description.innerText = `${notification.eventType === 'uploaded' ? '已上传到' : '修改于'} ${formatUpdateNotificationTime(notification)}`;
+      const actionText = notification.eventType === 'uploaded' ? '上传于' : '修改于';
+      description.innerText = `${notification.modifiedBy ? `${notification.modifiedBy} ` : ''}${actionText} ${formatUpdateNotificationTime(notification)}`;
       body.appendChild(description);
 
       const path = document.createElement('div');

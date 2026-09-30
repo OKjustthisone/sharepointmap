@@ -225,7 +225,6 @@ async function enrichFileUpdateNotificationAuthors(configId, items) {
   const updated = notifications.map(notification => {
     if (
       notification.configId !== (configId || 'legacy') ||
-      notification.eventType !== 'modified' ||
       notification.modifiedBy
     ) {
       return notification;
