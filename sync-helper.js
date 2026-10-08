@@ -190,7 +190,9 @@ function buildFileUpdateEvent(item, eventType, config) {
     name: item.name,
     relativeUrl: item.relativeUrl,
     webUrl: item.webUrl,
-    modifiedBy: item.modifiedBy || '',
+    modifiedBy: eventType === 'uploaded'
+      ? (item.createdBy || getSharePointAuthorName(item) || item.modifiedBy || '')
+      : (item.modifiedBy || getSharePointEditorName(item)),
     modifiedAt: item.modifiedAt || '',
     createdAt: item.createdAt || '',
     eventType,
@@ -208,14 +210,34 @@ function getSharePointEditorName(item) {
   return '';
 }
 
+function getSharePointAuthorName(item) {
+  const authors = [item?.Author, item?.CreatedBy, item?.Author0];
+  for (const author of authors) {
+    if (typeof author === 'string' && author) return author;
+    const name = author?.Title || author?.LookupValue || author?.Name;
+    if (name) return name;
+  }
+  return '';
+}
+
+function getSharePointActorName(item, eventType) {
+  return eventType === 'uploaded'
+    ? (getSharePointAuthorName(item) || getSharePointEditorName(item))
+    : getSharePointEditorName(item);
+}
+
 async function enrichFileUpdateNotificationAuthors(configId, items) {
-  const authorByFileId = new Map();
+  const actorByFileId = new Map();
   (Array.isArray(items) ? items : []).forEach(item => {
     const fileId = String(item?.UniqueId || '').replace(/[{}]/g, '').toLowerCase();
-    const author = getSharePointEditorName(item);
-    if (fileId && author) authorByFileId.set(fileId, author);
+    if (fileId) {
+      actorByFileId.set(fileId, {
+        uploaded: getSharePointActorName(item, 'uploaded'),
+        modified: getSharePointActorName(item, 'modified')
+      });
+    }
   });
-  if (authorByFileId.size === 0) return;
+  if (actorByFileId.size === 0) return;
 
   const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
   const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
@@ -223,20 +245,104 @@ async function enrichFileUpdateNotificationAuthors(configId, items) {
     : [];
   let changed = false;
   const updated = notifications.map(notification => {
-    if (
-      notification.configId !== (configId || 'legacy') ||
-      notification.modifiedBy
-    ) {
+    if (notification.configId !== (configId || 'legacy')) {
       return notification;
     }
 
     const fileId = String(notification.fileId || '').replace(/[{}]/g, '').toLowerCase();
-    const modifiedBy = authorByFileId.get(fileId);
-    if (!modifiedBy) return notification;
+    const actors = actorByFileId.get(fileId);
+    const actorName = actors?.[notification.eventType === 'uploaded' ? 'uploaded' : 'modified'];
+    if (!actorName || notification.modifiedBy === actorName) return notification;
     changed = true;
-    return { ...notification, modifiedBy };
+    return { ...notification, modifiedBy: actorName };
   });
 
+  if (changed) {
+    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
+  }
+}
+
+async function enrichUpdateEventActors(config, events) {
+  const missingActorEvents = events.filter(event => !event.modifiedBy && event.relativeUrl);
+  if (missingActorEvents.length === 0 || !config?.siteUrl || !config?.libraryName) return;
+
+  const headers = {
+    'Accept': 'application/json;odata=nometadata',
+    'Content-Type': 'application/json'
+  };
+  const eventsByPath = new Map();
+  missingActorEvents.forEach(event => {
+    const matchingEvents = eventsByPath.get(event.relativeUrl) || [];
+    matchingEvents.push(event);
+    eventsByPath.set(event.relativeUrl, matchingEvents);
+  });
+  const paths = Array.from(eventsByPath.keys());
+  const endpoint = `${config.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(config.libraryName)}')/items`;
+
+  try {
+    for (let index = 0; index < paths.length; index += 20) {
+      const batch = paths.slice(index, index + 20);
+      const filter = batch
+        .map(path => `FileRef eq '${path.replace(/'/g, "''")}'`)
+        .join(' or ');
+      const url = new URL(endpoint);
+      url.searchParams.set('$filter', filter);
+      url.searchParams.set('$select', 'UniqueId,FileRef,Author/Title,Editor/Title');
+      url.searchParams.set('$expand', 'Author,Editor');
+
+      const response = await fetch(url.toString(), { method: 'GET', headers });
+      if (!response.ok) {
+        throw new Error(`读取文件作者信息失败 (HTTP ${response.status})`);
+      }
+
+      const data = await response.json();
+      const actorsByPath = new Map(
+        (data.value || []).map(item => [item.FileRef, item])
+      );
+      batch.forEach(path => {
+        const item = actorsByPath.get(path);
+        if (!item) return;
+        eventsByPath.get(path).forEach(event => {
+          event.modifiedBy = getSharePointActorName(item, event.eventType);
+        });
+      });
+    }
+  } catch (err) {
+    console.warn('[SharePoint Map] Could not load file actors for update notifications:', err);
+  }
+}
+
+async function enrichStoredNotificationsForSubtree(configId, config, relativeUrl) {
+  const data = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
+  const notifications = Array.isArray(data[FILE_UPDATE_NOTIFICATIONS_KEY])
+    ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
+    : [];
+  const candidates = notifications.filter(notification => (
+    notification.configId === (configId || 'legacy') &&
+    typeof notification.relativeUrl === 'string' &&
+    (notification.relativeUrl === relativeUrl || notification.relativeUrl.startsWith(`${relativeUrl}/`)) &&
+    (notification.eventType === 'uploaded' || !notification.modifiedBy)
+  ));
+  if (candidates.length === 0) return;
+
+  const events = candidates.map(notification => ({
+    ...notification,
+    modifiedBy: ''
+  }));
+  await enrichUpdateEventActors(config, events);
+
+  const actorById = new Map(
+    events.filter(event => event.modifiedBy).map(event => [event.id, event.modifiedBy])
+  );
+  if (actorById.size === 0) return;
+
+  let changed = false;
+  const updated = notifications.map(notification => {
+    const actor = actorById.get(notification.id);
+    if (!actor || notification.modifiedBy === actor) return notification;
+    changed = true;
+    return { ...notification, modifiedBy: actor };
+  });
   if (changed) {
     await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: updated });
   }
@@ -275,7 +381,10 @@ async function updateFileUpdateBadge() {
 }
 
 async function recordFileUpdateNotifications(configId, config, updateEvents) {
-  const events = Array.isArray(updateEvents) ? updateEvents.filter(Boolean) : [];
+  const events = Array.isArray(updateEvents)
+    ? updateEvents.filter(Boolean).map(event => ({ ...event }))
+    : [];
+  await enrichUpdateEventActors(config, events);
   const cutoff = Date.now() - NOTIFICATION_RETENTION_MS;
   const existingData = await chrome.storage.local.get(FILE_UPDATE_NOTIFICATIONS_KEY);
   const existing = Array.isArray(existingData[FILE_UPDATE_NOTIFICATIONS_KEY])
@@ -303,7 +412,11 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
     const dedupeKey = [effectiveConfigId, event.fileId, event.eventType, event.eventTime].join('|');
     if (existingKeys.has(dedupeKey)) {
       const existingNotification = existingByKey.get(dedupeKey);
-      if (event.modifiedBy && existingNotification && !existingNotification.modifiedBy) {
+      if (
+        event.modifiedBy &&
+        existingNotification &&
+        existingNotification.modifiedBy !== event.modifiedBy
+      ) {
         existingNotification.modifiedBy = event.modifiedBy;
         enrichedExisting = true;
       }
@@ -791,7 +904,7 @@ async function fetchLibraryFlatSnapshot(siteUrl, libraryName, configId = '') {
   };
 
   // 一次请求即可返回整个文档库的扁平清单（含全部 URL），超过 5000 项时自动分页
-  let url = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$top=5000&$select=UniqueId,FileLeafRef,FileRef,FileSystemObjectType,Modified,Created,Editor/Title&$expand=Editor`;
+  let url = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$top=5000&$select=UniqueId,FileLeafRef,FileRef,FileSystemObjectType,Modified,Created,Author/Title,Editor/Title&$expand=Author,Editor`;
   const allItems = [];
   let page = 0;
   const MAX_PAGES = 30; // 30 * 5000 ≈ 15 万项上限
@@ -930,6 +1043,7 @@ function rebuildTreeFromFlatItems(flatItems, l1FolderRelativeUrl, baseUrl) {
       webUrl: buildSharePointWebUrl(baseUrl, newPath),
       modifiedAt: getItemModifiedAt(raw),
       createdAt: getItemCreatedAt(raw),
+      createdBy: getSharePointAuthorName(raw),
       modifiedBy: getSharePointEditorName(raw)
     };
 
@@ -1114,7 +1228,7 @@ async function syncSubtreeIncremental(
       if (modifiedBefore !== null) {
         modifiedFilters.push(`Modified le datetime'${new Date(modifiedBefore).toISOString()}'`);
       }
-      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=${modifiedFilters.join(' and ')}&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified,Editor/Title&$expand=Editor&$top=5000`;
+      const modifiedItemsUrl = `${siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(libraryName)}')/items?$filter=${modifiedFilters.join(' and ')}&$select=FileRef,FileSystemObjectType,UniqueId,FileLeafRef,Created,Modified,Author/Title,Editor/Title&$expand=Author,Editor&$top=5000`;
 
       try {
         const res = await fetch(modifiedItemsUrl, { method: 'GET', headers });
@@ -1144,6 +1258,7 @@ async function syncSubtreeIncremental(
                 webUrl: buildSharePointWebUrl(baseUrl, newPath),
                 modifiedAt: getItemModifiedAt(item),
                 createdAt: getItemCreatedAt(item),
+                createdBy: getSharePointAuthorName(item),
                 modifiedBy: getSharePointEditorName(item)
               };
               const previousItem = oldItemsById.get(item.UniqueId);
@@ -1648,7 +1763,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
 
   // 自动更新模式走原 Modified 时间窗增量逻辑；手动模式走全量快照比对
   if (syncOptions.mode === 'automatic') {
-    return syncSubtreeIncremental(
+    const nodeCount = await syncSubtreeIncremental(
       l1FolderId,
       l1FolderRelativeUrl,
       syncOptions,
@@ -1661,6 +1776,8 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
       modifiedBefore,
       overlapMs
     );
+    await enrichStoredNotificationsForSubtree(targetConfigId, targetConfig, l1FolderRelativeUrl);
+    return nodeCount;
   }
 
   let folderCount = 0;
@@ -1906,6 +2023,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     } else if (shouldDetectUpdates) {
       await updateFileUpdateBadge();
     }
+    await enrichStoredNotificationsForSubtree(targetConfigId, targetConfig, l1FolderRelativeUrl);
     return nodeCount;
 
   } catch (err) {
