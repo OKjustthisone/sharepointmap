@@ -580,11 +580,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       ? data[FILE_UPDATE_NOTIFICATIONS_KEY]
       : [];
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    updateNotifications = notifications
-      .filter(item => Number(item?.detectedAt) >= cutoff)
-      .sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0));
+    const recentNotifications = notifications.filter(item => Number(item?.detectedAt) >= cutoff);
+    updateNotifications = dedupeFileUpdateNotifications(recentNotifications);
 
-    if (updateNotifications.length !== notifications.length) {
+    const storedIds = notifications.map(item => item.id).join('|');
+    const currentIds = updateNotifications.map(item => item.id).join('|');
+    if (currentIds !== storedIds) {
       await chrome.storage.local.set({ file_update_notifications: updateNotifications });
     }
   }

@@ -380,6 +380,43 @@ async function updateFileUpdateBadge() {
   }
 }
 
+function getUpdateNotificationTimestamp(notification) {
+  const eventDate = notification.eventType === 'uploaded'
+    ? (notification.createdAt || notification.modifiedAt)
+    : (notification.modifiedAt || notification.createdAt);
+  const eventTimestamp = Date.parse(eventDate || notification.eventTime || '');
+  return Number.isFinite(eventTimestamp) ? eventTimestamp : Number(notification.detectedAt) || 0;
+}
+
+function dedupeFileUpdateNotifications(notifications) {
+  const latestByFile = new Map();
+  const unidentified = [];
+  (Array.isArray(notifications) ? notifications : []).forEach(notification => {
+    const fileKey = notification?.fileId || notification?.relativeUrl;
+    if (!fileKey) {
+      unidentified.push(notification);
+      return;
+    }
+
+    const key = `${notification.configId || 'legacy'}|${fileKey}`;
+    const existing = latestByFile.get(key);
+    if (
+      !existing ||
+      getUpdateNotificationTimestamp(notification) > getUpdateNotificationTimestamp(existing) ||
+      (
+        getUpdateNotificationTimestamp(notification) === getUpdateNotificationTimestamp(existing) &&
+        Number(notification.detectedAt) > Number(existing.detectedAt)
+      )
+    ) {
+      latestByFile.set(key, notification);
+    }
+  });
+
+  return [...latestByFile.values(), ...unidentified]
+    .sort((a, b) => getUpdateNotificationTimestamp(b) - getUpdateNotificationTimestamp(a))
+    .slice(0, MAX_FILE_UPDATE_NOTIFICATIONS);
+}
+
 async function recordFileUpdateNotifications(configId, config, updateEvents) {
   const events = Array.isArray(updateEvents)
     ? updateEvents.filter(Boolean).map(event => ({ ...event }))
@@ -391,18 +428,18 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
     ? existingData[FILE_UPDATE_NOTIFICATIONS_KEY]
     : [];
   const recentExisting = existing.filter(item => Number(item?.detectedAt) >= cutoff);
-
-  if (recentExisting.length !== existing.length) {
-    await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: recentExisting });
-  }
+  const uniqueRecentExisting = dedupeFileUpdateNotifications(recentExisting);
 
   if (events.length === 0) {
+    if (uniqueRecentExisting.length !== existing.length) {
+      await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: uniqueRecentExisting });
+    }
     await updateFileUpdateBadge();
     return [];
   }
 
-  const existingKeys = new Set(recentExisting.map(item => item.dedupeKey).filter(Boolean));
-  const existingByKey = new Map(recentExisting.map(item => [item.dedupeKey, item]).filter(([key]) => key));
+  const existingKeys = new Set(uniqueRecentExisting.map(item => item.dedupeKey).filter(Boolean));
+  const existingByKey = new Map(uniqueRecentExisting.map(item => [item.dedupeKey, item]).filter(([key]) => key));
   const effectiveConfigId = configId || 'legacy';
   const detectedAt = Date.now();
   const newNotifications = [];
@@ -447,21 +484,24 @@ async function recordFileUpdateNotifications(configId, config, updateEvents) {
 
   if (newNotifications.length === 0) {
     if (enrichedExisting) {
-      await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: recentExisting });
+      await chrome.storage.local.set({
+        [FILE_UPDATE_NOTIFICATIONS_KEY]: dedupeFileUpdateNotifications(uniqueRecentExisting)
+      });
+    } else if (uniqueRecentExisting.length !== existing.length) {
+      await chrome.storage.local.set({ [FILE_UPDATE_NOTIFICATIONS_KEY]: uniqueRecentExisting });
     }
     await updateFileUpdateBadge();
     return [];
   }
 
-  const allNotifications = [...recentExisting, ...newNotifications]
-    .sort((a, b) => (b.detectedAt || 0) - (a.detectedAt || 0))
-    .slice(0, MAX_FILE_UPDATE_NOTIFICATIONS);
+  const allNotifications = dedupeFileUpdateNotifications([...uniqueRecentExisting, ...newNotifications]);
 
   await chrome.storage.local.set({
     [FILE_UPDATE_NOTIFICATIONS_KEY]: allNotifications
   });
   await updateFileUpdateBadge();
-  return newNotifications;
+  const retainedIds = new Set(allNotifications.map(notification => notification.id));
+  return newNotifications.filter(notification => retainedIds.has(notification.id));
 }
 
 async function markFileUpdateNotificationsRead(ids) {
