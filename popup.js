@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let isTreeExpanded = false; // 全部目录折叠展开状态
 
   // 1. 初始化检查配置
-  await initApp();
+  await initializeAppSafely();
 
   // 2. 绑定页面通用交互事件
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
@@ -297,6 +297,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ==================== 初始化与数据加载 ====================
 
+  async function initializeAppSafely() {
+    try {
+      await initApp();
+    } catch (err) {
+      console.error('Popup initialization failed:', err);
+      directoryTree.innerHTML = `
+        <div class="empty-list-placeholder" style="color: var(--danger-red);">
+          <span class="initialization-error-message"></span><br>
+          <button class="inline-sync-btn" id="retryInitializationBtn" type="button">重新加载</button>
+        </div>
+      `;
+      directoryTree.querySelector('.initialization-error-message').textContent =
+        `本地数据加载失败：${String(err?.message || err)}`;
+      document.getElementById('retryInitializationBtn').addEventListener('click', async (event) => {
+        const retryBtn = event.currentTarget;
+        retryBtn.disabled = true;
+        retryBtn.textContent = '正在重新加载...';
+        directoryTree.innerHTML = `
+          <div class="loading-spinner-wrapper">
+            <div class="spinner"></div>
+            <span>正在加载本地数据...</span>
+          </div>
+        `;
+        await initializeAppSafely();
+      });
+    }
+  }
+
   async function initApp() {
     // A. 运行配置迁移（如果需要）
     await migrateConfigsIfNeeded();
@@ -339,6 +367,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       l1Cache = data.l1_cache;
     }
 
+    const uiState = configData.ui_state || {};
+    expandedState = uiState.expandedState || {};
+    isTreeExpanded = uiState.isTreeExpanded || false;
+    activeFilter = uiState.activeFilter || 'all';
+    activeL1Path = uiState.activeL1Path || 'all';
+
+    if (l1Cache && l1Cache.items) {
+      renderFavorites();
+      renderDirectoryTree();
+    }
+
     syncStatus = await loadSyncStatusFromStorage(favorites);
     subtreeCache = await loadSubtreeCacheFromStorage(favorites);
     await loadUpdateNotificationsFromStorage();
@@ -350,12 +389,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderUpdateNotifications();
 
     // 恢复 UI 状态变量
-    const uiState = configData.ui_state || {};
-    expandedState = uiState.expandedState || {};
-    isTreeExpanded = uiState.isTreeExpanded || false;
-    activeFilter = uiState.activeFilter || 'all';
-    activeL1Path = uiState.activeL1Path || 'all';
-
     if (!spConfig || !spConfig.siteUrl || !spConfig.libraryName) {
       showAlert('请先配置您的 SharePoint 站点与文档库。', 'alert');
       directoryTree.innerHTML = `
@@ -495,7 +528,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         notificationPage = 0;
         
         // 重新初始化并加载新站点的数据
-        await initApp();
+        await initializeAppSafely();
       });
       tabsContainer.appendChild(btn);
     });
@@ -1025,13 +1058,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 创建树节点 DOM 元素
-  function createTreeNodeElement(item, depth, isFavList = false) {
+  function createTreeNodeElement(item, depth, isFavList = false, isInsideFavoriteFolder = false) {
     const container = document.createElement('div');
     container.className = 'tree-node-wrapper';
 
     const isFolder = item.type === 'folder';
     const isExpanded = expandedState[item.id] || false;
     const isFav = favorites.some(fav => fav.id === item.id);
+    const isInFavoriteFolder = isInsideFavoriteFolder ||
+      (isFolder && (isFavList || (item.level === 1 && isFav)));
 
     // 判断该文件夹是否已在缓存中 (如果是 1 级收藏文件夹，或者其父辈已被收藏)
     const hasCache = getCachedSubtree(item.id, item.relativeUrl);
@@ -1053,14 +1088,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let syncBtnHtml = '';
     const isNodeSyncing = syncStatus[item.id] && syncStatus[item.id].status === 'syncing';
-    if (isFolder && item.level === 1 && isFav) {
+    if (isFolder && ((item.level === 1 && isFav) || isInFavoriteFolder)) {
       const loadingClass = isNodeSyncing ? 'loading' : '';
-      const syncTitle = isNodeSyncing ? '正在同步子树...' : '同步该目录下的子树';
+      const syncTitle = isNodeSyncing ? '正在同步子树...' : '同步该文件夹及其子目录';
       syncBtnHtml = `<button class="action-btn sync-btn ${loadingClass}" title="${syncTitle}" aria-label="${syncTitle}">${svgIcon('sync', 'action-svg')}</button>`;
     }
 
     let favBtnHtml = '';
-    if (!isFavList) {
+    if (!isFavList && !(isInsideFavoriteFolder && isFolder)) {
       const favTitle = isFav ? '取消快捷收藏' : '加入快捷收藏';
       favBtnHtml = `<button class="fav-btn ${isFav ? 'active' : ''}" title="${favTitle}" aria-label="${favTitle}">${svgIcon(isFav ? 'star-filled' : 'star', 'fav-svg')}</button>`;
     }
@@ -1100,7 +1135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // 2. 收藏按钮事件
-    if (!isFavList) {
+    if (favBtnHtml) {
       nodeEl.querySelector('.fav-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         toggleFavorite(item);
@@ -1108,7 +1143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 2.5 同步子树按钮事件
-    if (isFolder && item.level === 1 && isFav) {
+    if (syncBtnHtml) {
       const syncBtn = nodeEl.querySelector('.sync-btn');
       if (syncBtn) {
         syncBtn.addEventListener('click', (e) => {
@@ -1154,7 +1189,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           childrenContainer.style.display = 'block';
           
           // 加载子项
-          renderSubtreeItems(item, childrenContainer, depth + 1);
+          renderSubtreeItems(item, childrenContainer, depth + 1, isInFavoriteFolder);
         } else {
           arrow.classList.remove('expanded');
           folderIcon.innerHTML = svgIcon('folder', 'node-svg-icon');
@@ -1170,15 +1205,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // 如果初始化状态为展开，则自动渲染子目录
       if (isExpanded) {
-        renderSubtreeItems(item, childrenContainer, depth + 1);
+        renderSubtreeItems(item, childrenContainer, depth + 1, isInFavoriteFolder);
       }
+    } else {
+      nodeEl.querySelector('.node-left').addEventListener('click', () => handleOpen(item.webUrl));
     }
 
     return container;
   }
 
   // 渲染子目录项
-  function renderSubtreeItems(parentItem, container, depth) {
+  function renderSubtreeItems(parentItem, container, depth, isInsideFavoriteFolder = false) {
     container.innerHTML = '';
 
     // 判断该父级文件夹的子树是否存在于缓存中
@@ -1200,10 +1237,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // 优先显示子文件夹，再显示文件
       folders.forEach(sub => {
-        container.appendChild(createTreeNodeElement({ ...sub, level: depth }, depth));
+        container.appendChild(createTreeNodeElement({ ...sub, level: depth }, depth, false, isInsideFavoriteFolder));
       });
       files.forEach(sub => {
-        container.appendChild(createTreeNodeElement({ ...sub, level: depth }, depth));
+        container.appendChild(createTreeNodeElement({ ...sub, level: depth }, depth, false, isInsideFavoriteFolder));
       });
 
       // 如果是 1 级收藏的文件夹，在其展开列表的最下方展示全量统计汇总
@@ -1494,6 +1531,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         itemEl.querySelector('.open-btn').addEventListener('click', () => handleOpen(item.webUrl));
         itemEl.querySelector('.copy-btn').addEventListener('click', () => handleCopy(item.webUrl));
         itemEl.querySelector('.fav-btn').addEventListener('click', () => toggleFavorite(item));
+        if (!isFolder) {
+          itemEl.querySelector('.node-name').addEventListener('click', () => handleOpen(item.webUrl));
+        }
 
         searchResultsList.appendChild(itemEl);
       }

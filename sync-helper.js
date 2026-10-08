@@ -514,8 +514,15 @@ async function clearDNRRules() {
 
 // 辅助函数：安全转义 SharePoint 相对路径 URL (保留斜杠并处理空格与单引号)
 function cleanRelativePathUrl(siteUrl, relativePath, apiType) {
+  let decodedPath = relativePath;
+  try {
+    decodedPath = decodeURIComponent(relativePath);
+  } catch (err) {
+    console.warn('Could not decode SharePoint server-relative path:', relativePath, err);
+  }
+
   // 1. 转义单引号以防止 OData 语句解析截断 (两单引号表示转义)
-  const escapedPath = relativePath.replace(/'/g, "''");
+  const escapedPath = decodedPath.replace(/'/g, "''");
   // 2. 使用 encodeURIComponent 对路径进行完整编码，确保所有的特殊字符 (例如 #、%、& 等) 被正确编码，避免 HTTP 解析问题。
   // 在 GetFolderByServerRelativePath 中，路径是作为字符串参数传递的，因此斜杠 / 编码为 %2F 也是完全被支持的。
   const encodedPath = encodeURIComponent(escapedPath);
@@ -1612,6 +1619,17 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     throw new Error('站点配置或文档库名称丢失，无法抓取子树');
   }
 
+  const l1CacheKey = targetConfigId ? `l1_cache_${targetConfigId}` : 'l1_cache';
+  const l1CacheData = await chrome.storage.local.get(l1CacheKey);
+  const l1Items = l1CacheData[l1CacheKey]?.items || [];
+  const cacheRootFolder = l1Items
+    .filter(item => item.type === 'folder' &&
+      (l1FolderRelativeUrl === item.relativeUrl || l1FolderRelativeUrl.startsWith(`${item.relativeUrl}/`)))
+    .sort((a, b) => b.relativeUrl.length - a.relativeUrl.length)[0];
+  const cacheRootFolderId = cacheRootFolder?.id || l1FolderId;
+  const cacheRootRelativeUrl = cacheRootFolder?.relativeUrl || l1FolderRelativeUrl;
+  const isPartialSubtreeSync = cacheRootRelativeUrl !== l1FolderRelativeUrl;
+
   let modifiedAfter = parseSyncTimestamp(syncOptions.modifiedAfter);
   let modifiedBefore = parseSyncTimestamp(syncOptions.modifiedBefore);
   if (syncOptions.mode === 'manual' && modifiedAfter === null) {
@@ -1693,7 +1711,7 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
     await setupCookieDNRRule(siteUrl);
 
     // 获取历史缓存
-    const storageKey = 'subtree_cache_' + l1FolderId;
+    const storageKey = 'subtree_cache_' + cacheRootFolderId;
     const storageData = await chrome.storage.local.get(storageKey);
     const cachedData = storageData[storageKey];
     const oldTree = cachedData?.tree;
@@ -1759,6 +1777,16 @@ async function syncSubtree(l1FolderId, l1FolderRelativeUrl, syncOptions = {}) {
         }
         return nodeCount;
       }
+    }
+    if (isPartialSubtreeSync) {
+      const mergedTree = { ...(oldTree || {}) };
+      Object.keys(mergedTree).forEach(folderPath => {
+        if (folderPath === l1FolderRelativeUrl || folderPath.startsWith(`${l1FolderRelativeUrl}/`)) {
+          delete mergedTree[folderPath];
+        }
+      });
+      newTree = { ...mergedTree, ...newTree };
+      folderCount = Object.keys(newTree).length;
     }
     lastReportedFolder = l1FolderRelativeUrl;
 
